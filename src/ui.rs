@@ -1,0 +1,289 @@
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+    prelude::Alignment,
+    Frame,
+};
+use crate::app::App;
+use regex::Regex;
+use once_cell::sync::Lazy;
+
+// Define regex patterns for syntax highlighting
+static NUMBER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d+(?:\.\d+)?)").unwrap());
+static PERCENTAGE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d+(?:\.\d+)?%)").unwrap());
+static UNIT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z]+)\b").unwrap());
+static OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"([\+\-\*/\^=])").unwrap());
+static KEYWORD_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(to|in|of|what|is|next)\b").unwrap());
+static SPECIAL_WORD_REGEX: Lazy<Regex> = Lazy::new(|| 
+    Regex::new(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|day|weeks|months|days)\b").unwrap()
+);
+static COMMENT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(#.*)").unwrap());
+
+pub fn draw(f: &mut Frame, app: &mut App) {
+    // Create main layout with header and content areas
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1)      // Content area
+        ].as_ref())
+        .split(f.size());
+    
+    // Draw the branding in the header
+    draw_header(f, main_chunks[0]);
+    
+    // Split the content area into two horizontal panels
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+        .split(main_chunks[1]);
+
+    draw_input_panel(f, app, content_chunks[0]);
+    draw_output_panel(f, app, content_chunks[1]);
+}
+
+// Function to draw the header with Cali branding
+fn draw_header(f: &mut Frame, area: Rect) {
+    // Create a block for the header with no borders
+    let header_block = Block::default()
+        .style(Style::default());
+    
+    // Create a paragraph with the simple text
+    let header = Paragraph::new("Cali")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .block(header_block)
+        .alignment(Alignment::Left);
+
+    f.render_widget(header, area);
+}
+
+fn draw_input_panel(f: &mut Frame, app: &App, area: Rect) {
+    // Create a block for the input area
+    let input_block = Block::default()
+        .title("Input")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::White));
+
+    // Convert lines to styled list items with syntax highlighting
+    let items: Vec<ListItem> = app.lines
+        .iter()
+        .enumerate()
+        .map(|(_, line)| {
+            // Apply syntax highlighting to this line
+            let highlighted_line = highlight_syntax(line);
+            
+            ListItem::new(highlighted_line)
+        })
+        .collect();
+
+    // Create the list widget
+    let input_list = List::new(items)
+        .block(input_block)
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+
+    f.render_widget(input_list, area);
+
+    // Draw cursor
+    if app.lines.len() > app.cursor_pos.0 {
+        let line = &app.lines[app.cursor_pos.0];
+        let cursor_x = if app.cursor_pos.1 <= line.len() { 
+            app.cursor_pos.1 as u16 
+        } else { 
+            line.len() as u16 
+        };
+
+        // Cursor is in input area, offset by border and line number
+        f.set_cursor(
+            area.x + cursor_x + 1, // +1 for border
+            area.y + app.cursor_pos.0 as u16 + 1, // +1 for border
+        );
+    }
+}
+
+// Function to apply syntax highlighting to a line of text
+fn highlight_syntax(text: &str) -> Line {
+    // Start with an empty list of spans
+    let mut spans = Vec::new();
+    
+    // Keep track of which parts of the text have been processed
+    let mut processed_indices = vec![false; text.len()];
+    
+    // Find and highlight comments (both full line and inline)
+    for captures in COMMENT_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::DarkGray)
+            )));
+            
+            // If it starts at the beginning of the line, it's a full comment line
+            if m.start() == 0 {
+                return Line::from(spans.into_iter().map(|(_, _, span)| span).collect::<Vec<_>>());
+            }
+        }
+    }
+    
+    // Find and highlight percentages (must come before numbers)
+    for captures in PERCENTAGE_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
+            )));
+        }
+    }
+    
+    // Find and highlight numbers, but only if they're not already marked as processed
+    for captures in NUMBER_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            // Skip if already processed (e.g., part of a percentage)
+            if is_already_processed(&processed_indices, m.start(), m.end()) {
+                continue;
+            }
+            
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::LightYellow)
+            )));
+        }
+    }
+    
+    // Find and highlight operators
+    for captures in OPERATOR_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            // Skip if already processed
+            if is_already_processed(&processed_indices, m.start(), m.end()) {
+                continue;
+            }
+            
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::LightRed)
+            )));
+        }
+    }
+    
+    // Find and highlight keywords
+    for captures in KEYWORD_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            // Skip if already processed
+            if is_already_processed(&processed_indices, m.start(), m.end()) {
+                continue;
+            }
+            
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::LightBlue)
+            )));
+        }
+    }
+    
+    // Find and highlight special words (days, units)
+    for captures in SPECIAL_WORD_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            // Skip if already processed
+            if is_already_processed(&processed_indices, m.start(), m.end()) {
+                continue;
+            }
+            
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::LightMagenta)
+            )));
+        }
+    }
+    
+    // Find and highlight units
+    for captures in UNIT_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            // Skip if already processed
+            if is_already_processed(&processed_indices, m.start(), m.end()) {
+                continue;
+            }
+            
+            // Check if this is a currency unit (3 letters, all uppercase)
+            let is_currency = m.as_str().len() == 3 && m.as_str().chars().all(|c| c.is_ascii_uppercase());
+            
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(if is_currency { Color::LightGreen } else { Color::LightCyan })
+            )));
+        }
+    }
+    
+    // Add any remaining unprocessed text as plain spans
+    let mut start = 0;
+    for i in 0..text.len() {
+        if !processed_indices[i] && (i == 0 || processed_indices[i-1]) {
+            start = i;
+        }
+        
+        if !processed_indices[i] && (i == text.len() - 1 || processed_indices[i+1]) {
+            spans.push((start, i+1, Span::styled(
+                text[start..=i].to_string(),
+                Style::default().fg(Color::White)
+            )));
+        }
+    }
+    
+    // Sort spans by start position
+    spans.sort_by_key(|(start, _, _)| *start);
+    
+    // Extract just the spans for the Line
+    Line::from(spans.into_iter().map(|(_, _, span)| span).collect::<Vec<_>>())
+}
+
+// Helper function to mark indices as processed
+fn mark_as_processed(processed: &mut Vec<bool>, start: usize, end: usize) {
+    for i in start..end {
+        processed[i] = true;
+    }
+}
+
+// Helper function to check if a range is already processed
+fn is_already_processed(processed: &Vec<bool>, start: usize, end: usize) -> bool {
+    for i in start..end {
+        if processed[i] {
+            return true;
+        }
+    }
+    false
+}
+
+fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
+    // Create a block for the output area
+    let output_block = Block::default()
+        .title("Output")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::White));
+
+    // Convert result lines to styled list items
+    let items: Vec<ListItem> = app.results
+        .iter()
+        .enumerate()
+        .map(|(_, result)| {
+            if result.starts_with("Error:") {
+                // For error messages, keep them red
+                ListItem::new(Line::from(Span::styled(result.clone(), Style::default().fg(Color::Red))))
+            } else {
+                // Apply syntax highlighting for normal results
+                ListItem::new(highlight_syntax(result))
+            }
+        })
+        .collect();
+
+    // Create the list widget
+    let output_list = List::new(items)
+        .block(output_block);
+
+    f.render_widget(output_list, area);
+} 
