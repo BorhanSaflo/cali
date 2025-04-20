@@ -1,0 +1,60 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build and Release for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: cali
+            asset_name: cali-linux-amd64
+          - os: windows-latest
+            artifact_name: cali.exe
+            asset_name: cali-windows-amd64.exe
+          - os: macos-latest
+            artifact_name: cali
+            asset_name: cali-macos-amd64
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        profile: minimal
+    
+    - name: Build
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --release
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.asset_name }}
+        path: target/release/${{ matrix.artifact_name }}
+    
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/v')
+      with:
+        files: target/release/${{ matrix.artifact_name }}
+        name: Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
+        generate_release_notes: true 
