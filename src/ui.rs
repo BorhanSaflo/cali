@@ -22,12 +22,13 @@ static SPECIAL_WORD_REGEX: Lazy<Regex> = Lazy::new(||
 static COMMENT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(#.*)").unwrap());
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    // Create main layout with header and content areas
+    // Create main layout with header, content, and status areas
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Min(1)      // Content area
+            Constraint::Length(2),      // Header
+            Constraint::Min(1),         // Content area
+            Constraint::Length(1)       // Status bar
         ].as_ref())
         .split(f.size());
     
@@ -42,6 +43,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     draw_input_panel(f, app, content_chunks[0]);
     draw_output_panel(f, app, content_chunks[1]);
+    
+    // Draw the status bar
+    draw_status_bar(f, app, main_chunks[2]);
 }
 
 // Function to draw the header with Cali branding
@@ -286,4 +290,39 @@ fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
         .block(output_block);
 
     f.render_widget(output_list, area);
+}
+
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    match app.input_mode {
+        crate::app::InputMode::Normal => {
+            // Normal mode: display status message
+            let status_text = match &app.status_message {
+                Some(message) => message.as_str(),
+                None => ""
+            };
+            
+            let status_bar = Paragraph::new(status_text)
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .block(Block::default());
+            
+            f.render_widget(status_bar, area);
+        },
+        crate::app::InputMode::FilePath => {
+            // Input mode: show input field for file path
+            let prompt = "Enter file path to save to: ";
+            let input_text = format!("{}{}", prompt, app.status_input);
+            
+            let status_bar = Paragraph::new(input_text)
+                .style(Style::default().fg(Color::Yellow))
+                .block(Block::default());
+            
+            f.render_widget(status_bar, area);
+            
+            // Set cursor position at the end of input
+            f.set_cursor(
+                area.x + (prompt.len() + app.status_input.len()) as u16,
+                area.y,
+            );
+        }
+    }
 } 

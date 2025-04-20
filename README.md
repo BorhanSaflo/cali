@@ -97,6 +97,7 @@ price - 15%         # $8.50
 - `Home/End`: Move to start/end of line
 - `Backspace/Delete`: Delete characters
 - `Ctrl+q`: Quit the application
+- `Ctrl+s`: Save the current file
 
 ## License
 

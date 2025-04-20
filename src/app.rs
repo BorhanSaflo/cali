@@ -11,8 +11,19 @@ pub struct App {
     pub debounced_results: Vec<String>, // Complete results (with errors) after debounce period
     pub last_keystroke: Instant,       // Time of last keystroke
     pub debounce_period: Duration,     // Debounce period for showing errors
+    pub status_message: Option<String>, // Status message to display in the status bar
+    pub input_mode: InputMode,         // Current input mode
+    pub status_input: String,          // Input text for status bar when in input mode
+    status_time: Option<Instant>,      // When the status message was set
     modified_lines: HashSet<usize>,    // Track which lines were modified since last evaluation
     cached_variables: HashMap<String, Value>, // Cache variables from previous evaluations
+}
+
+// Input mode for the application
+#[derive(PartialEq, Clone, Copy)]
+pub enum InputMode {
+    Normal,    // Regular calculator mode
+    FilePath,  // Entering a file path in the status bar
 }
 
 impl App {
@@ -25,9 +36,72 @@ impl App {
             debounced_results: vec![String::new()],
             last_keystroke: Instant::now(),
             debounce_period: Duration::from_millis(500),
+            status_message: None,
+            input_mode: InputMode::Normal,
+            status_input: String::new(),
+            status_time: None,
             modified_lines: HashSet::new(),
             cached_variables: HashMap::new(),
         }
+    }
+
+    // Set the input mode
+    pub fn set_input_mode(&mut self, mode: InputMode) {
+        self.input_mode = mode;
+        if mode == InputMode::FilePath {
+            self.status_input = String::new();
+        }
+    }
+    
+    // Process key input for status bar when in input mode
+    pub fn handle_status_input(&mut self, key: KeyEvent) -> Option<String> {
+        match key.code {
+            KeyCode::Enter => {
+                // User has confirmed the input
+                let result = self.status_input.clone();
+                self.status_input.clear();
+                self.input_mode = InputMode::Normal;
+                Some(result)
+            }
+            KeyCode::Esc => {
+                // User has cancelled the input
+                self.status_input.clear();
+                self.input_mode = InputMode::Normal;
+                None
+            }
+            KeyCode::Backspace => {
+                // Delete the character before the cursor
+                self.status_input.pop();
+                None
+            }
+            KeyCode::Char(c) => {
+                // Add the character to the input
+                self.status_input.push(c);
+                None
+            }
+            _ => None,
+        }
+    }
+    
+    // Set a status message that will be displayed in the status bar
+    pub fn set_status_message(&mut self, message: String) {
+        self.status_message = Some(message);
+        self.status_time = Some(Instant::now());
+    }
+    
+    // Clear the status message
+    pub fn clear_status_message(&mut self) {
+        self.status_message = None;
+        self.status_time = None;
+    }
+
+    // Add a new line of text to the app
+    pub fn add_line(&mut self, line: String) {
+        let line_index = self.lines.len();
+        self.lines.push(line);
+        self.results.push(String::new());
+        self.debounced_results.push(String::new());
+        self.modified_lines.insert(line_index);
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -93,7 +167,8 @@ impl App {
         self.evaluate_expressions();
     }
 
-    fn evaluate_expressions(&mut self) {
+    // Make the evaluate_expressions method public so it can be called from outside
+    pub fn evaluate_expressions(&mut self) {
         // Clone the current variables state for comparing after evaluation
         let prev_variables = self.variables.clone();
         
@@ -212,6 +287,13 @@ impl App {
         // update results to show any pending errors
         if self.last_keystroke.elapsed() >= self.debounce_period {
             self.results = self.debounced_results.clone();
+        }
+        
+        // Clear status message after 3 seconds
+        if let Some(time) = self.status_time {
+            if time.elapsed() >= Duration::from_secs(3) {
+                self.clear_status_message();
+            }
         }
     }
 
