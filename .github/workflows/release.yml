@@ -8,6 +8,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+  packages: write
+  
 jobs:
   build-and-release:
     name: Build and Release for ${{ matrix.os }}
@@ -56,5 +60,4 @@ jobs:
         name: Release ${{ github.ref_name }}
         draft: false
         prerelease: false
-        token: ${{ secrets.GITHUB_TOKEN }}
         generate_release_notes: true 
