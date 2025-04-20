@@ -3,7 +3,7 @@ use chrono::{NaiveDate, Local, Datelike, Duration, Weekday};
 use crate::parser::{Expr, Op};
 
 // Value types that can be stored in variables
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
     Percentage(f64),
@@ -16,27 +16,73 @@ pub enum Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Number(n) => write!(f, "{}", n),
+            Value::Number(n) => {
+                // Format integers without decimals, format decimals with up to 6 places
+                if n.fract() == 0.0 {
+                    write!(f, "{:.0}", n)
+                } else {
+                    // First try with 2 decimal places
+                    let s = format!("{:.2}", n);
+                    // If it rounds back to the original value, use that
+                    if let Ok(parsed) = s.parse::<f64>() {
+                        if (parsed - n).abs() < 1e-10 {
+                            return write!(f, "{}", s);
+                        }
+                    }
+                    // Otherwise use 6 decimal places
+                    write!(f, "{:.6}", n)
+                }
+            },
             Value::Percentage(p) => write!(f, "{}%", p),
             Value::Unit(v, u) => {
                 // Special handling for currencies (3-letter uppercase codes)
-                let is_currency = u.len() == 3 && u.chars().all(|c| c.is_ascii_uppercase());
+                let is_currency = is_currency_code(u);
                 
                 if is_currency {
                     match u.as_str() {
-                        "USD" => write!(f, "${}", v),
-                        "EUR" => write!(f, "€{}", v),
-                        "GBP" => write!(f, "£{}", v),
-                        "CAD" => write!(f, "C${}", v),
-                        "JPY" => write!(f, "¥{}", v),
-                        "AUD" => write!(f, "A${}", v),
-                        "CNY" => write!(f, "¥{}", v),
-                        "INR" => write!(f, "₹{}", v),
-                        // For other currencies, use the code format
-                        _ => write!(f, "{} {}", v, u),
+                        "USD" => {
+                            if v.fract() == 0.0 {
+                                write!(f, "${:.0}", v)
+                            } else {
+                                write!(f, "${:.2}", v)
+                            }
+                        },
+                        "EUR" => {
+                            if v.fract() == 0.0 {
+                                write!(f, "€{:.0}", v)
+                            } else {
+                                write!(f, "€{:.2}", v)
+                            }
+                        },
+                        "GBP" => {
+                            if v.fract() == 0.0 {
+                                write!(f, "£{:.0}", v)
+                            } else {
+                                write!(f, "£{:.2}", v)
+                            }
+                        },
+                        // For other currencies, use the regular format
+                        _ => {
+                            if v.fract() == 0.0 {
+                                write!(f, "{:.0} {}", v, u)
+                            } else {
+                                write!(f, "{:.2} {}", v, u)
+                            }
+                        }
                     }
+                } else if v.fract() == 0.0 {
+                    write!(f, "{:.0} {}", v, u)
                 } else {
-                    write!(f, "{} {}", v, u)
+                    // First try with 2 decimal places
+                    let s = format!("{:.2}", v);
+                    // If it rounds back to the original value, use that
+                    if let Ok(parsed) = s.parse::<f64>() {
+                        if (parsed - v).abs() < 1e-10 {
+                            return write!(f, "{} {}", s, u);
+                        }
+                    }
+                    // Otherwise use 6 decimal places
+                    write!(f, "{:.6} {}", v, u)
                 }
             },
             Value::Date(d) => write!(f, "{}", d),
@@ -44,29 +90,6 @@ impl std::fmt::Display for Value {
             Value::Assignment(_, value) => write!(f, "{}", value),
         }
     }
-}
-
-// Evaluate a list of expressions and return formatted results
-pub fn evaluate_lines(lines: &[String], variables: &mut HashMap<String, Value>) -> Vec<String> {
-    lines.iter()
-        .map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                String::new()
-            } else if trimmed.starts_with('#') {
-                // Return an empty string for comment lines
-                String::new()
-            } else {
-                let expr = crate::parser::parse_line(line, variables);
-                let result = evaluate(&expr, variables);
-                if let Value::Assignment(name, value) = &result {
-                    // Store the variable for future use
-                    variables.insert(name.clone(), (**value).clone());
-                }
-                format!("{}", result)
-            }
-        })
-        .collect()
 }
 
 // Evaluate an expression to a value
@@ -190,9 +213,9 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
                     _ => unreachable!(),
                 }
             } else {
-                // Check if both are currencies (3-letter uppercase codes)
-                let is_unit_a_currency = normalized_unit_a.len() == 3 && normalized_unit_a.chars().all(|c| c.is_ascii_uppercase());
-                let is_unit_b_currency = normalized_unit_b.len() == 3 && normalized_unit_b.chars().all(|c| c.is_ascii_uppercase());
+                // Check if both are currencies
+                let is_unit_a_currency = is_currency_code(&normalized_unit_a);
+                let is_unit_b_currency = is_currency_code(&normalized_unit_b);
                 
                 if is_unit_a_currency && is_unit_b_currency {
                     // For currencies, always convert to the first currency
@@ -258,14 +281,13 @@ fn convert_unit(value_expr: &Expr, target_unit: &str, variables: &mut HashMap<St
     // Normalize the target unit
     let normalized_target_unit = normalize_unit(target_unit);
     
-    // Preserve original case for output display if it's a data unit
-    let display_unit = match normalized_target_unit.as_str() {
-        "KB" | "MB" | "GB" | "TB" | "PB" | "B" => normalized_target_unit.clone(),
-        _ => if target_unit.chars().all(|c| c.is_uppercase()) {
-            target_unit.to_string()
-        } else {
-            normalized_target_unit.clone()
-        }
+    // Prepare the display unit for output
+    let display_unit = if ["KB", "MB", "GB", "TB", "PB", "B"].contains(&normalized_target_unit.as_str()) {
+        normalized_target_unit.clone()
+    } else if target_unit.chars().all(|c| c.is_uppercase()) {
+        target_unit.to_string()
+    } else {
+        normalized_target_unit.clone()
     };
     
     match value {
@@ -273,19 +295,19 @@ fn convert_unit(value_expr: &Expr, target_unit: &str, variables: &mut HashMap<St
             // Normalize the source unit
             let normalized_source_unit = normalize_unit(&source_unit);
             
+            // If units are the same after normalization, no conversion needed
             if normalized_source_unit == normalized_target_unit {
                 return Value::Unit(v, display_unit);
             }
             
-            if let Some(converted) = convert_units(v, &normalized_source_unit, &normalized_target_unit) {
-                Value::Unit(converted, display_unit)
-            } else {
-                Value::Error(format!("Cannot convert from {} to {}", source_unit, target_unit))
+            // Attempt conversion
+            match convert_units(v, &normalized_source_unit, &normalized_target_unit) {
+                Some(converted_value) => Value::Unit(converted_value, display_unit),
+                None => Value::Error(format!("Cannot convert from {} to {}", source_unit, target_unit))
             }
         },
         Value::Number(v) => {
-            // For unitless numbers, we can assume the user wants to convert them to the target unit
-            // Directly apply the target unit
+            // For unitless numbers, just apply the target unit
             Value::Unit(v, display_unit)
         },
         _ => Value::Error(format!("Cannot convert value to {}. Try assigning the unit first with 'variable * 1 {}'", target_unit, target_unit)),
@@ -333,29 +355,77 @@ fn calculate_date_offset(day_name: &str, amount: i64, unit: &str) -> Value {
     Value::Date(result_date)
 }
 
+// Function to check if a string is a valid currency code
+fn is_currency_code(unit: &str) -> bool {
+    unit.len() == 3 && unit.chars().all(|c| c.is_ascii_uppercase())
+}
+
 // Convert between different units
 fn convert_units(value: f64, from_unit: &str, to_unit: &str) -> Option<f64> {
+    // Special case for unit identity (same unit)
+    if from_unit == to_unit {
+        return Some(value);
+    }
+    
     // Normalize units to handle aliases
     let from_unit = normalize_unit(from_unit);
     let to_unit = normalize_unit(to_unit);
     
+    // Check again after normalization
+    if from_unit == to_unit {
+        return Some(value);
+    }
+    
     // Check if both units are currencies (uppercase 3-letter codes like USD, EUR, etc.)
-    let is_from_currency = from_unit.len() == 3 && from_unit.chars().all(|c| c.is_ascii_uppercase());
-    let is_to_currency = to_unit.len() == 3 && to_unit.chars().all(|c| c.is_ascii_uppercase());
+    let is_from_currency = is_currency_code(&from_unit);
+    let is_to_currency = is_currency_code(&to_unit);
     
     if is_from_currency && is_to_currency {
         // Use currency API for currency conversions
-        match crate::currency::get_exchange_rate(&from_unit, &to_unit) {
-            Some(rate) => return Some(value * rate),
-            None => {
-                eprintln!("DEBUG: Failed to get exchange rate from {} to {}", from_unit, to_unit);
-                return None;
-            }
+        if let Some(rate) = crate::currency::get_exchange_rate(&from_unit, &to_unit) {
+            return Some(value * rate);
         }
+        return None;
     }
     
     // For non-currency conversions, use the lookup table
     match (from_unit.as_str(), to_unit.as_str()) {
+        // Data units conversions
+        ("B", "bit") => Some(value * 8.0),
+        ("bit", "B") => Some(value / 8.0),
+        
+        // Time conversions
+        ("s", "min") => Some(value / 60.0),
+        ("min", "s") => Some(value * 60.0),
+        ("min", "h") => Some(value / 60.0),
+        ("h", "min") => Some(value * 60.0),
+        ("h", "s") => Some(value * 3600.0),
+        ("s", "h") => Some(value / 3600.0),
+        ("day", "h") => Some(value * 24.0),
+        ("h", "day") => Some(value / 24.0),
+        ("day", "s") => Some(value * 86400.0),
+        ("s", "day") => Some(value / 86400.0),
+        ("week", "day") => Some(value * 7.0),
+        ("day", "week") => Some(value / 7.0),
+        ("month", "day") => Some(value * 30.44), // average month length
+        ("day", "month") => Some(value / 30.44),
+        ("year", "day") => Some(value * 365.25), // average year length
+        ("day", "year") => Some(value / 365.25),
+        ("year", "month") => Some(value * 12.0),
+        ("month", "year") => Some(value / 12.0),
+        ("decade", "year") => Some(value * 10.0),
+        ("year", "decade") => Some(value / 10.0),
+        ("century", "year") => Some(value * 100.0),
+        ("year", "century") => Some(value / 100.0),
+        
+        // Time conversions for milliseconds, microseconds, nanoseconds
+        ("ms", "s") => Some(value / 1000.0),
+        ("s", "ms") => Some(value * 1000.0),
+        ("us", "ms") => Some(value / 1000.0),
+        ("ms", "us") => Some(value * 1000.0),
+        ("ns", "us") => Some(value / 1000.0),
+        ("us", "ns") => Some(value * 1000.0),
+        
         // Length conversions
         ("cm", "m") => Some(value / 100.0),
         ("m", "cm") => Some(value * 100.0),
@@ -440,36 +510,6 @@ fn convert_units(value: f64, from_unit: &str, to_unit: &str) -> Option<f64> {
         ("st", "kg") => Some(value * 6.35029),
         ("kg", "st") => Some(value / 6.35029),
         
-        // Time conversions
-        ("ms", "s") => Some(value / 1000.0),
-        ("s", "ms") => Some(value * 1000.0),
-        ("us", "ms") => Some(value / 1000.0),
-        ("ms", "us") => Some(value * 1000.0),
-        ("ns", "us") => Some(value / 1000.0),
-        ("us", "ns") => Some(value * 1000.0),
-        ("min", "s") => Some(value * 60.0),
-        ("s", "min") => Some(value / 60.0),
-        ("h", "min") => Some(value * 60.0),
-        ("min", "h") => Some(value / 60.0),
-        ("h", "s") => Some(value * 3600.0),
-        ("s", "h") => Some(value / 3600.0),
-        ("day", "h") => Some(value * 24.0),
-        ("h", "day") => Some(value / 24.0),
-        ("day", "s") => Some(value * 86400.0),
-        ("s", "day") => Some(value / 86400.0),
-        ("week", "day") => Some(value * 7.0),
-        ("day", "week") => Some(value / 7.0),
-        ("month", "day") => Some(value * 30.44), // average month length
-        ("day", "month") => Some(value / 30.44),
-        ("year", "day") => Some(value * 365.25), // average year length
-        ("day", "year") => Some(value / 365.25),
-        ("year", "month") => Some(value * 12.0),
-        ("month", "year") => Some(value / 12.0),
-        ("decade", "year") => Some(value * 10.0),
-        ("year", "decade") => Some(value / 10.0),
-        ("century", "year") => Some(value * 100.0),
-        ("year", "century") => Some(value / 100.0),
-        
         // Temperature conversions
         ("C", "F") => Some(value * 9.0/5.0 + 32.0),
         ("F", "C") => Some((value - 32.0) * 5.0/9.0),
@@ -489,8 +529,6 @@ fn convert_units(value: f64, from_unit: &str, to_unit: &str) -> Option<f64> {
         ("TB", "GB") => Some(value * 1024.0),
         ("TB", "PB") => Some(value / 1024.0),
         ("PB", "TB") => Some(value * 1024.0),
-        ("bit", "B") => Some(value / 8.0),
-        ("B", "bit") => Some(value * 8.0),
         
         // Energy conversions
         ("J", "kJ") => Some(value / 1000.0),
@@ -544,116 +582,212 @@ fn convert_units(value: f64, from_unit: &str, to_unit: &str) -> Option<f64> {
 
 // Function to normalize unit strings - convert aliases to canonical forms
 fn normalize_unit(unit: &str) -> String {
-    let unit = unit.trim().to_lowercase();
-    
-    // Special case for common data storage units which might be uppercase in input
-    match unit.as_str() {
-        // Data units (case-insensitive handling)
-        "kb" => return "KB".to_string(),
-        "mb" => return "MB".to_string(),
-        "gb" => return "GB".to_string(),
-        "tb" => return "TB".to_string(),
-        "pb" => return "PB".to_string(),
-        "b" => return "B".to_string(),
+    use once_cell::sync::Lazy;
+    use std::collections::HashMap;
+
+    // Single, consolidated mapping of unit aliases to canonical forms
+    static UNIT_MAP: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
+        let mut map = HashMap::new();
         
-        // Handle currency codes specifically - ensure they remain uppercase
-        "eur" | "EUR" => return "EUR".to_string(),
-        "usd" | "USD" => return "USD".to_string(),
-        "gbp" | "GBP" => return "GBP".to_string(),
-        "cad" | "CAD" => return "CAD".to_string(),
-        "jpy" | "JPY" => return "JPY".to_string(),
-        "aud" | "AUD" => return "AUD".to_string(),
-        "cny" | "CNY" => return "CNY".to_string(),
-        "inr" | "INR" => return "INR".to_string(),
+        // Special cases that need exact case preservation
+        map.insert("bit", "bit");
+        map.insert("s", "s");
+        map.insert("min", "min");
+        map.insert("h", "h");
+        map.insert("day", "day");
+        map.insert("week", "week");
+        map.insert("month", "month");
+        map.insert("year", "year");
+        map.insert("ms", "ms");
+        map.insert("us", "us");
+        map.insert("ns", "ns");
+        map.insert("b", "B");
+
+        // Data units that need uppercase
+        map.insert("kb", "KB");
+        map.insert("mb", "MB");
+        map.insert("gb", "GB");
+        map.insert("tb", "TB");
+        map.insert("pb", "PB");
         
-        _ => {}
-    }
-    
-    match unit.as_str() {
-        // Time units
-        "minute" | "minutes" | "mins" | "m" => "min".to_string(),
-        "second" | "seconds" | "sec" | "secs" => "s".to_string(),
-        "hour" | "hours" | "hr" | "hrs" => "h".to_string(),
-        "millisecond" | "milliseconds" | "msec" | "msecs" => "ms".to_string(),
-        "microsecond" | "microseconds" | "usec" | "usecs" => "us".to_string(),
-        "nanosecond" | "nanoseconds" | "nsec" | "nsecs" => "ns".to_string(),
-        "days" => "day".to_string(),
-        "weeks" => "week".to_string(),
-        "months" => "month".to_string(),
-        "years" => "year".to_string(),
-        
-        // Length units
-        "meters" | "metre" | "metres" => "m".to_string(),
-        "centimeters" | "centimetre" | "centimetres" => "cm".to_string(),
-        "millimeters" | "millimetre" | "millimetres" => "mm".to_string(),
-        "kilometers" | "kilometre" | "kilometres" => "km".to_string(),
-        "inches" => "in".to_string(),
-        "feet" | "foot" => "ft".to_string(),
-        "yards" => "yd".to_string(),
-        "miles" => "mi".to_string(),
-        
-        // Weight units
-        "grams" => "g".to_string(),
-        "kilograms" | "kgs" | "kilos" => "kg".to_string(),
-        "milligrams" => "mg".to_string(),
-        "pounds" | "lbs" => "lb".to_string(),
-        "ounces" => "oz".to_string(),
-        "tons" | "tonnes" => "ton".to_string(),
-        "stones" => "st".to_string(),
-        
-        // Volume units
-        "milliliters" | "millilitres" => "ml".to_string(),
-        "liters" | "litres" | "l" => "l".to_string(),
-        "teaspoons" => "tsp".to_string(),
-        "tablespoons" => "tbsp".to_string(),
-        "cups" => "cup".to_string(),
-        "pints" => "pt".to_string(),
-        "quarts" => "qt".to_string(),
-        "gallons" => "gal".to_string(),
-        "fluid ounces" | "fluidounces" => "floz".to_string(),
+        // Temperature units are uppercase
+        map.insert("c", "C");
+        map.insert("f", "F");
+        map.insert("k", "K");
         
         // Data units
-        "bytes" => "B".to_string(),
-        "kilobytes" => "KB".to_string(),
-        "megabytes" | "mb" => "MB".to_string(),
-        "gigabytes" | "gb" => "GB".to_string(),
-        "terabytes" | "tb" => "TB".to_string(),
-        "petabytes" | "pb" => "PB".to_string(),
-        "bits" => "bit".to_string(),
+        map.insert("bytes", "B");
+        map.insert("kilobytes", "KB");
+        map.insert("megabytes", "MB");
+        map.insert("gigabytes", "GB");
+        map.insert("terabytes", "TB");
+        map.insert("petabytes", "PB");
+        map.insert("bits", "bit");
+        
+        // Currencies
+        map.insert("eur", "EUR");
+        map.insert("usd", "USD");
+        map.insert("gbp", "GBP");
+        map.insert("cad", "CAD");
+        map.insert("jpy", "JPY");
+        map.insert("aud", "AUD");
+        map.insert("cny", "CNY");
+        map.insert("inr", "INR");
+        
+        // Time units
+        map.insert("minute", "min");
+        map.insert("minutes", "min");
+        map.insert("mins", "min");
+        map.insert("m", "min");
+        map.insert("second", "s");
+        map.insert("seconds", "s");
+        map.insert("sec", "s");
+        map.insert("secs", "s");
+        map.insert("hour", "h");
+        map.insert("hours", "h");
+        map.insert("hr", "h");
+        map.insert("hrs", "h");
+        map.insert("millisecond", "ms");
+        map.insert("milliseconds", "ms");
+        map.insert("msec", "ms");
+        map.insert("msecs", "ms");
+        map.insert("microsecond", "us");
+        map.insert("microseconds", "us");
+        map.insert("usec", "us");
+        map.insert("usecs", "us");
+        map.insert("nanosecond", "ns");
+        map.insert("nanoseconds", "ns");
+        map.insert("nsec", "ns");
+        map.insert("nsecs", "ns");
+        map.insert("days", "day");
+        map.insert("weeks", "week");
+        map.insert("months", "month");
+        map.insert("years", "year");
+        
+        // Length units
+        map.insert("meters", "m");
+        map.insert("metre", "m");
+        map.insert("metres", "m");
+        map.insert("centimeters", "cm");
+        map.insert("centimetre", "cm");
+        map.insert("centimetres", "cm");
+        map.insert("millimeters", "mm");
+        map.insert("millimetre", "mm");
+        map.insert("millimetres", "mm");
+        map.insert("kilometers", "km");
+        map.insert("kilometre", "km");
+        map.insert("kilometres", "km");
+        map.insert("inches", "in");
+        map.insert("feet", "ft");
+        map.insert("foot", "ft");
+        map.insert("yards", "yd");
+        map.insert("miles", "mi");
+        
+        // Weight units
+        map.insert("grams", "g");
+        map.insert("kilograms", "kg");
+        map.insert("kgs", "kg");
+        map.insert("kilos", "kg");
+        map.insert("milligrams", "mg");
+        map.insert("pounds", "lb");
+        map.insert("lbs", "lb");
+        map.insert("ounces", "oz");
+        map.insert("tons", "ton");
+        map.insert("tonnes", "ton");
+        map.insert("stones", "st");
+        
+        // Volume units
+        map.insert("milliliters", "ml");
+        map.insert("millilitres", "ml");
+        map.insert("liters", "l");
+        map.insert("litres", "l");
+        map.insert("teaspoons", "tsp");
+        map.insert("tablespoons", "tbsp");
+        map.insert("cups", "cup");
+        map.insert("pints", "pt");
+        map.insert("quarts", "qt");
+        map.insert("gallons", "gal");
+        map.insert("fluid ounces", "floz");
+        map.insert("fluidounces", "floz");
         
         // Temperature units
-        "celsius" | "centigrade" => "C".to_string(),
-        "fahrenheit" => "F".to_string(),
-        "kelvin" => "K".to_string(),
+        map.insert("celsius", "C");
+        map.insert("centigrade", "C");
+        map.insert("fahrenheit", "F");
+        map.insert("kelvin", "K");
         
         // Energy units
-        "joules" => "J".to_string(),
-        "kilojoules" => "kJ".to_string(),
-        "calories" => "cal".to_string(),
-        "kilocalories" | "kcals" => "kcal".to_string(),
-        "kilowatt hours" | "kilowatt-hours" => "kWh".to_string(),
-        "electron volts" => "eV".to_string(),
+        map.insert("joules", "J");
+        map.insert("kilojoules", "kJ");
+        map.insert("calories", "cal");
+        map.insert("kilocalories", "kcal");
+        map.insert("kcals", "kcal");
+        map.insert("kilowatt hours", "kWh");
+        map.insert("kilowatt-hours", "kWh");
+        map.insert("electron volts", "eV");
         
         // Power units
-        "watts" => "W".to_string(),
-        "kilowatts" => "kW".to_string(),
-        "megawatts" => "MW".to_string(),
-        "horsepower" => "hp".to_string(),
+        map.insert("watts", "W");
+        map.insert("kilowatts", "kW");
+        map.insert("megawatts", "MW");
+        map.insert("horsepower", "hp");
         
         // Pressure units
-        "pascals" => "Pa".to_string(),
-        "kilopascals" => "kPa".to_string(),
-        "bars" => "bar".to_string(),
-        "pounds per square inch" | "psi" => "psi".to_string(),
-        "atmospheres" | "atm" => "atm".to_string(),
+        map.insert("pascals", "Pa");
+        map.insert("kilopascals", "kPa");
+        map.insert("bars", "bar");
+        map.insert("pounds per square inch", "psi");
+        map.insert("atmospheres", "atm");
         
         // Speed units
-        "meters per second" | "metres per second" => "mps".to_string(),
-        "kilometers per hour" | "kilometres per hour" | "kph" => "kmph".to_string(),
-        "miles per hour" => "mph".to_string(),
-        "knots" => "knot".to_string(),
+        map.insert("meters per second", "mps");
+        map.insert("metres per second", "mps");
+        map.insert("kilometers per hour", "kmph");
+        map.insert("kilometres per hour", "kmph");
+        map.insert("kph", "kmph");
+        map.insert("miles per hour", "mph");
+        map.insert("knots", "knot");
         
-        // If no match, return the original
-        _ => unit.to_string(),
+        map
+    });
+
+    let original = unit.trim();
+    let lowercase = original.to_lowercase();
+    
+    // First try the map lookup which includes all special cases
+    if let Some(canonical) = UNIT_MAP.get(lowercase.as_str()) {
+        return (*canonical).to_string();
     }
-} 
+    
+    // Special case for currency detection (3-letter uppercase codes)
+    if lowercase.len() == 3 && lowercase.chars().all(|c| c.is_ascii_alphabetic()) {
+        return lowercase.to_uppercase();
+    }
+    
+    // If no match, return the original lowercase
+    lowercase
+}
+
+// Evaluate a list of expressions and return formatted results
+#[allow(dead_code)]
+pub fn evaluate_lines(lines: &[String], variables: &mut HashMap<String, Value>) -> Vec<String> {
+    lines.iter()
+        .map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                String::new()
+            } else if trimmed.starts_with('#') {
+                // Return an empty string for comment lines
+                String::new()
+            } else {
+                let expr = crate::parser::parse_line(line, variables);
+                let result = evaluate(&expr, variables);
+                if let Value::Assignment(name, value) = &result {
+                    // Store the variable for future use
+                    variables.insert(name.clone(), (**value).clone());
+                }
+                format!("{}", result)
+            }
+        })
+        .collect()
+}

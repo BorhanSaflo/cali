@@ -1,6 +1,19 @@
 use std::collections::HashMap;
 use regex::Regex;
 use crate::evaluator::Value;
+use once_cell::sync::Lazy;
+
+// Pre-compiled regular expressions for better performance
+static SET_RATE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)setrate\s+([A-Z]{3})\s+(?:to|in)\s+([A-Z]{3})\s*=\s*(\d+(?:\.\d+)?)").unwrap());
+static CONVERSION_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+)\s+(?:in|to)\s+(.+)").unwrap());
+static PERCENT_OF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+)%\s+of\s+(.+)").unwrap());
+static VAR_OF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\w+)\s+of\s+(.+)").unwrap());
+static PERCENT_OF_WHAT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+)\s+of\s+what\s+is\s+(.+)").unwrap());
+static DATE_EXPR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)next\s+(\w+)(?:\s*\+\s*(\d+)\s+(\w+))?").unwrap());
+static ADD_SUB_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+?)([+\-])(.+)").unwrap());
+static MUL_DIV_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+?)([*/^%])(.+)").unwrap());
+static NUMBER_UNIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(-?\d+(?:\.\d+)?)\s*([a-zA-Z][a-zA-Z0-9]*)").unwrap());
+static VAR_UNIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"([a-zA-Z][a-zA-Z0-9]*)\s+([A-Z]{3})").unwrap());
 
 // Expression type enum
 #[derive(Debug, Clone)]
@@ -78,8 +91,7 @@ pub fn parse_line(line: &str, variables: &HashMap<String, Value>) -> Expr {
 
 // Parse a setrate command (setrate USD to EUR = 0.92)
 fn parse_set_rate(line: &str) -> Option<Expr> {
-    let re = Regex::new(r"(?i)setrate\s+([A-Z]{3})\s+(?:to|in)\s+([A-Z]{3})\s*=\s*(\d+(?:\.\d+)?)").ok()?;
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = SET_RATE_RE.captures(line) {
         let from_currency = caps[1].to_uppercase();
         let to_currency = caps[2].to_uppercase();
         if let Ok(rate) = caps[3].parse::<f64>() {
@@ -107,8 +119,7 @@ fn parse_assignment(line: &str, variables: &HashMap<String, Value>) -> Option<Ex
 // Parse a unit conversion expression (expr in unit)
 fn parse_conversion(line: &str, variables: &HashMap<String, Value>) -> Option<Expr> {
     // Match pattern like "X in Y" or "X to Y"
-    let re = Regex::new(r"(.+)\s+(?:in|to)\s+(.+)").ok()?;
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = CONVERSION_RE.captures(line) {
         let value_expr = parse_line(&caps[1], variables);
         let target_unit = caps[2].trim().to_string();
         Some(Expr::Convert(Box::new(value_expr), target_unit))
@@ -120,15 +131,13 @@ fn parse_conversion(line: &str, variables: &HashMap<String, Value>) -> Option<Ex
 // Parse a percentage expression (X% of Y)
 fn parse_percentage(line: &str, variables: &HashMap<String, Value>) -> Option<Expr> {
     // Handle X% of Y
-    let re = Regex::new(r"(.+)%\s+of\s+(.+)").ok()?;
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = PERCENT_OF_RE.captures(line) {
         let percent_expr = parse_simple_value(&caps[1], variables);
         let value_expr = parse_line(&caps[2], variables);
         Some(Expr::PercentOf(Box::new(percent_expr), Box::new(value_expr)))
     } else {
         // Handle "X of Y" where X is a variable that might be a percentage
-        let re = Regex::new(r"(\w+)\s+of\s+(.+)").ok()?;
-        if let Some(caps) = re.captures(line) {
+        if let Some(caps) = VAR_OF_RE.captures(line) {
             let var_name = caps[1].trim();
             if variables.contains_key(var_name) {
                 let percent_expr = Expr::Variable(var_name.to_string());
@@ -138,8 +147,7 @@ fn parse_percentage(line: &str, variables: &HashMap<String, Value>) -> Option<Ex
         }
         
         // Alternative pattern: "X of what is Y"
-        let re = Regex::new(r"(.+)\s+of\s+what\s+is\s+(.+)").ok()?;
-        if let Some(caps) = re.captures(line) {
+        if let Some(caps) = PERCENT_OF_WHAT_RE.captures(line) {
             let percent_expr = parse_simple_value(&caps[1], variables);
             let result_expr = parse_line(&caps[2], variables);
             // If X% of Y = Z, then Y = Z / (X/100)
@@ -153,8 +161,7 @@ fn parse_percentage(line: &str, variables: &HashMap<String, Value>) -> Option<Ex
 // Parse a date expression (next friday + 2 weeks)
 fn parse_date_expression(line: &str) -> Option<Expr> {
     // Simple pattern for "next X + Y Z" where X is a day, Y is a number, Z is a unit
-    let re = Regex::new(r"(?i)next\s+(\w+)(?:\s*\+\s*(\d+)\s+(\w+))?").ok()?;
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = DATE_EXPR_RE.captures(line) {
         let day = caps[1].to_lowercase();
         let amount = caps.get(2).map_or(0, |m| m.as_str().parse::<i64>().unwrap_or(0));
         // Store the lowercase unit in a new variable to avoid the temporary value issue
@@ -173,8 +180,7 @@ fn parse_date_expression(line: &str) -> Option<Expr> {
 // Parse a binary operation (expr op expr)
 fn parse_binary_op(line: &str, variables: &HashMap<String, Value>) -> Option<Expr> {
     // First, check for addition or subtraction
-    let re = Regex::new(r"(.+?)([+\-])(.+)").ok()?;
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = ADD_SUB_RE.captures(line) {
         let left = parse_line(&caps[1], variables);
         let right = parse_line(&caps[3], variables);
         
@@ -188,8 +194,7 @@ fn parse_binary_op(line: &str, variables: &HashMap<String, Value>) -> Option<Exp
     }
     
     // If no addition/subtraction, check for multiplication, division, etc.
-    let re = Regex::new(r"(.+?)([*/^%])(.+)").ok()?;
-    if let Some(caps) = re.captures(line) {
+    if let Some(caps) = MUL_DIV_RE.captures(line) {
         let left = parse_line(&caps[1], variables);
         let right = parse_line(&caps[3], variables);
         
@@ -211,8 +216,7 @@ fn parse_binary_op(line: &str, variables: &HashMap<String, Value>) -> Option<Exp
 fn parse_unit_value(text: &str) -> Option<(f64, String)> {
     // Pattern for numbers with units: "10 USD", "5.2 kg", "3 m2", etc.
     // This handles both pure alphabetic units (USD, kg) and units with numbers (m2, km2)
-    let number_unit_re = Regex::new(r"(-?\d+(?:\.\d+)?)\s*([a-zA-Z][a-zA-Z0-9]*)").ok()?;
-    if let Some(caps) = number_unit_re.captures(text) {
+    if let Some(caps) = NUMBER_UNIT_RE.captures(text) {
         let value = caps[1].parse::<f64>().ok()?;
         let unit = caps[2].trim().to_string();
         return Some((value, unit));
@@ -239,19 +243,16 @@ fn parse_simple_value(line: &str, variables: &HashMap<String, Value>) -> Expr {
     }
     
     // Check for the pattern "variable unit" (e.g., "z USD")
-    let var_unit_re = Regex::new(r"([a-zA-Z][a-zA-Z0-9]*)\s+([A-Z]{3})").ok();
-    if let Some(re) = var_unit_re {
-        if let Some(caps) = re.captures(line) {
-            let var_name = caps[1].trim();
-            let unit = caps[2].trim();
-            
-            if variables.contains_key(var_name) {
-                return Expr::BinaryOp(
-                    Box::new(Expr::Variable(var_name.to_string())),
-                    Op::Multiply,
-                    Box::new(Expr::UnitValue(1.0, unit.to_string()))
-                );
-            }
+    if let Some(caps) = VAR_UNIT_RE.captures(line) {
+        let var_name = caps[1].trim();
+        let unit = caps[2].trim();
+        
+        if variables.contains_key(var_name) {
+            return Expr::BinaryOp(
+                Box::new(Expr::Variable(var_name.to_string())),
+                Op::Multiply,
+                Box::new(Expr::UnitValue(1.0, unit.to_string()))
+            );
         }
     }
     

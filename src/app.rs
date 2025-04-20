@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Instant, Duration};
 use crossterm::event::{KeyEvent, KeyCode};
-use crate::evaluator::{Value, evaluate_lines};
+use crate::evaluator::Value;
 
 pub struct App {
     pub lines: Vec<String>,
@@ -11,6 +11,8 @@ pub struct App {
     pub debounced_results: Vec<String>, // Complete results (with errors) after debounce period
     pub last_keystroke: Instant,       // Time of last keystroke
     pub debounce_period: Duration,     // Debounce period for showing errors
+    modified_lines: HashSet<usize>,    // Track which lines were modified since last evaluation
+    cached_variables: HashMap<String, Value>, // Cache variables from previous evaluations
 }
 
 impl App {
@@ -23,6 +25,8 @@ impl App {
             debounced_results: vec![String::new()],
             last_keystroke: Instant::now(),
             debounce_period: Duration::from_millis(500),
+            modified_lines: HashSet::new(),
+            cached_variables: HashMap::new(),
         }
     }
 
@@ -30,14 +34,23 @@ impl App {
         // Update last keystroke time
         self.last_keystroke = Instant::now();
         
+        // Track which line is being modified
+        let current_line = self.cursor_pos.0;
+        self.modified_lines.insert(current_line);
+        
         match key.code {
             KeyCode::Enter => {
                 self.insert_newline();
+                // New line affects both the current and next line
+                self.modified_lines.insert(self.cursor_pos.0);
             }
             KeyCode::Backspace => {
                 if self.cursor_at_start_of_line() && self.cursor_pos.0 > 0 {
                     // Join with previous line
+                    let prev_line = self.cursor_pos.0 - 1;
                     self.join_with_previous_line();
+                    // This affects the previous line
+                    self.modified_lines.insert(prev_line);
                 } else {
                     self.delete_char_before_cursor();
                 }
@@ -46,6 +59,8 @@ impl App {
                 if self.cursor_at_end_of_line() && self.cursor_pos.0 < self.lines.len() - 1 {
                     // Join with next line
                     self.join_with_next_line();
+                    // This affects the current line
+                    self.modified_lines.insert(self.cursor_pos.0);
                 } else {
                     self.delete_char_at_cursor();
                 }
@@ -79,29 +94,115 @@ impl App {
     }
 
     fn evaluate_expressions(&mut self) {
-        // Always calculate the full results, but we'll filter errors for display
-        let full_results = evaluate_lines(&self.lines, &mut self.variables);
+        // Clone the current variables state for comparing after evaluation
+        let prev_variables = self.variables.clone();
         
-        // Store the full results for later (for debouncing)
-        self.debounced_results = full_results.clone();
+        // If there are no modified lines, nothing to do
+        if self.modified_lines.is_empty() {
+            return;
+        }
         
-        // For immediate display, filter out errors if we're within the debounce period
-        if self.last_keystroke.elapsed() < self.debounce_period {
-            // Only show errors for lines that haven't changed recently
-            self.results = full_results
-                .iter()
-                .map(|result| {
-                    if result.starts_with("Error:") {
-                        // Temporarily hide errors
-                        String::new()
-                    } else {
-                        result.clone()
-                    }
-                })
-                .collect();
-        } else {
-            // Outside debounce period, show everything including errors
-            self.results = full_results;
+        // Get a sorted list of modified lines
+        let mut modified: Vec<usize> = self.modified_lines.iter().cloned().collect();
+        modified.sort();
+        
+        // First pass: evaluate just the modified lines to update variables
+        self.evaluate_modified_lines(&modified);
+        
+        // Second pass: find variables that changed and evaluate dependent lines
+        self.evaluate_dependent_lines(&prev_variables);
+        
+        // Clear the modified lines set
+        self.modified_lines.clear();
+        
+        // Store the current variables state for the next comparison
+        self.cached_variables = self.variables.clone();
+    }
+
+    // Evaluate the modified lines to update variables
+    fn evaluate_modified_lines(&mut self, modified_lines: &[usize]) {
+        for &line_idx in modified_lines {
+            if line_idx < self.lines.len() {
+                let line = &self.lines[line_idx];
+                // Skip empty lines and comments
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                
+                // Parse and evaluate this line
+                let expr = crate::parser::parse_line(line, &self.variables);
+                let result = crate::evaluator::evaluate(&expr, &mut self.variables);
+                
+                // Update the result for this line
+                self.update_result_for_line(line_idx, &result);
+            }
+        }
+    }
+
+    // Update the result for a specific line
+    fn update_result_for_line(&mut self, line_idx: usize, result: &crate::evaluator::Value) {
+        if line_idx < self.results.len() {
+            // If it's an assignment, store the variable
+            if let crate::evaluator::Value::Assignment(name, value) = result {
+                self.variables.insert(name.clone(), (**value).clone());
+            }
+
+            // Format the result
+            let result_str = if self.last_keystroke.elapsed() < self.debounce_period && result.to_string().starts_with("Error:") {
+                String::new() // Hide errors during debounce period
+            } else {
+                format!("{}", result)
+            };
+            
+            // Update the results
+            self.results[line_idx] = result_str;
+            self.debounced_results[line_idx] = format!("{}", result);
+        }
+    }
+
+    // Find variables that changed and evaluate dependent lines
+    fn evaluate_dependent_lines(&mut self, prev_variables: &HashMap<String, crate::evaluator::Value>) {
+        // Check which variables changed
+        let changed_vars = self.find_changed_variables(prev_variables);
+        
+        // If any variables changed, re-evaluate all lines that use those variables
+        if !changed_vars.is_empty() {
+            self.reevaluate_dependent_lines(&changed_vars);
+        }
+    }
+
+    // Find which variables changed compared to previous state
+    fn find_changed_variables(&self, prev_variables: &HashMap<String, crate::evaluator::Value>) -> HashSet<String> {
+        let mut changed_vars = HashSet::new();
+        
+        for (var, val) in &self.variables {
+            if !prev_variables.contains_key(var) || prev_variables.get(var) != Some(val) {
+                changed_vars.insert(var.clone());
+            }
+        }
+        
+        changed_vars
+    }
+
+    // Re-evaluate lines that depend on changed variables
+    fn reevaluate_dependent_lines(&mut self, changed_vars: &HashSet<String>) {
+        // Simple approach: re-evaluate all lines that contain any of the changed variables
+        for i in 0..self.lines.len() {
+            let line = &self.lines[i];
+            
+            // Check if this line contains any of the changed variables
+            // This is a simple string-based check, might have false positives
+            let needs_eval = changed_vars.iter().any(|var| line.contains(var));
+            
+            if needs_eval {
+                // Parse and evaluate this line
+                let expr = crate::parser::parse_line(line, &self.variables);
+                let result = crate::evaluator::evaluate(&expr, &mut self.variables);
+                
+                // Update the result for this line
+                self.update_result_for_line(i, &result);
+            }
         }
     }
 
