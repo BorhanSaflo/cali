@@ -7,6 +7,7 @@ mod currency;
 mod tests;
 
 use std::io;
+use std::env;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -16,6 +17,13 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use app::App;
 
 fn main() -> Result<(), io::Error> {
+    // Check for version flags
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && (args[1] == "-v" || args[1] == "--version") {
+        println!("Cali version {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     // Set up terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
