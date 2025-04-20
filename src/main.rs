@@ -98,8 +98,40 @@ fn main() -> Result<(), io::Error> {
                                         app.set_input_mode(app::InputMode::FilePath);
                                     }
                                 }
+                                KeyCode::Tab => {
+                                    // Switch focus between panels
+                                    app.toggle_panel_focus();
+                                }
                                 _ => {
-                                    app.handle_key(key);
+                                    match app.panel_focus {
+                                        app::PanelFocus::Input => {
+                                            // Process input normally
+                                            app.handle_key(key);
+                                        }
+                                        app::PanelFocus::Output => {
+                                            // Handle navigation in output panel
+                                            match key.code {
+                                                KeyCode::Up | KeyCode::Down | 
+                                                KeyCode::Char('j') | KeyCode::Char('k') |
+                                                KeyCode::Home | KeyCode::End |
+                                                KeyCode::Char('g') | KeyCode::Char('G') => {
+                                                    app.navigate_output_panel(key.code);
+                                                }
+                                                KeyCode::Enter | KeyCode::Char('y') => {
+                                                    // Copy selected line to clipboard (y for "yank" in vim)
+                                                    match app.copy_selected_output_to_clipboard() {
+                                                        Ok(_) => {
+                                                            app.set_status_message("Copied to clipboard".to_string());
+                                                        }
+                                                        Err(e) => {
+                                                            app.set_status_message(format!("Error: {}", e));
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -216,6 +248,14 @@ fn print_help() {
     println!("KEYBOARD SHORTCUTS:");
     println!("  Ctrl+Q                  Quit the application");
     println!("  Ctrl+S                  Save the current work to a file");
+    println!("  Tab                     Switch focus between input and output panels");
+    println!();
+    println!("  When output panel is focused:");
+    println!("  Up/k                    Move selection up");
+    println!("  Down/j                  Move selection down");
+    println!("  g/Home                  Jump to first line");
+    println!("  G/End                   Jump to last line");
+    println!("  Enter/y                 Copy selected output to clipboard (y for 'yank')");
     println!();
     println!("EXAMPLES:");
     println!("  cali                    Start interactive calculator");

@@ -64,11 +64,15 @@ fn draw_header(f: &mut Frame, area: Rect) {
 }
 
 fn draw_input_panel(f: &mut Frame, app: &App, area: Rect) {
-    // Create a block for the input area
+    // Create a block for the input area with a style based on focus
     let input_block = Block::default()
         .title("Input")
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(if app.panel_focus == crate::app::PanelFocus::Input {
+            Color::Cyan
+        } else {
+            Color::White
+        }));
 
     // Convert lines to styled list items with syntax highlighting
     let items: Vec<ListItem> = app.lines
@@ -89,8 +93,8 @@ fn draw_input_panel(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(input_list, area);
 
-    // Draw cursor
-    if app.lines.len() > app.cursor_pos.0 {
+    // Only show cursor in the input panel if it has focus
+    if app.panel_focus == crate::app::PanelFocus::Input && app.lines.len() > app.cursor_pos.0 {
         let line = &app.lines[app.cursor_pos.0];
         let cursor_x = if app.cursor_pos.1 <= line.len() { 
             app.cursor_pos.1 as u16 
@@ -264,32 +268,104 @@ fn is_already_processed(processed: &Vec<bool>, start: usize, end: usize) -> bool
 }
 
 fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
-    // Create a block for the output area
+    // Create a block for the output area with a style based on focus
     let output_block = Block::default()
         .title("Output")
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(if app.panel_focus == crate::app::PanelFocus::Output {
+            Color::Cyan
+        } else {
+            Color::White
+        }));
+
+    // Define the inner area (inside the borders)
+    let inner_area = output_block.inner(area);
+    
+    // Render the block
+    f.render_widget(output_block, area);
 
     // Convert result lines to styled list items
     let items: Vec<ListItem> = app.results
         .iter()
         .enumerate()
-        .map(|(_, result)| {
+        .map(|(idx, result)| {
+            // Check if this is the selected line
+            let is_selected = app.panel_focus == crate::app::PanelFocus::Output && idx == app.output_selected_idx;
+            
+            // Style based on content and selection
+            let line_style = if is_selected {
+                Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            } else if result.starts_with("Error:") {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default()
+            };
+            
+            // Apply styling to the line
             if result.starts_with("Error:") {
-                // For error messages, keep them red
-                ListItem::new(Line::from(Span::styled(result.clone(), Style::default().fg(Color::Red))))
+                // For error messages, keep them red but with selection style if selected
+                ListItem::new(Line::from(Span::styled(result.clone(), 
+                    if is_selected {
+                        Style::default().fg(Color::Red).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Red)
+                    }
+                )))
+            } else if result.is_empty() {
+                // Empty result, just create an empty line with the appropriate style
+                ListItem::new(Line::from(Span::styled("", line_style)))
             } else {
                 // Apply syntax highlighting for normal results
-                ListItem::new(highlight_syntax(result))
+                let highlighted = highlight_syntax(result);
+                
+                // If this is the selected line in output focus mode, apply background highlight to all spans
+                if is_selected {
+                    let styled_spans = highlighted.spans.iter().map(|span| {
+                        let mut style = span.style;
+                        style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+                        Span::styled(span.content.clone(), style)
+                    }).collect::<Vec<_>>();
+                    
+                    ListItem::new(Line::from(styled_spans))
+                } else {
+                    ListItem::new(highlighted)
+                }
             }
         })
         .collect();
 
     // Create the list widget
-    let output_list = List::new(items)
-        .block(output_block);
-
-    f.render_widget(output_list, area);
+    let output_list = List::new(items);
+    
+    // Render the list inside the inner area
+    f.render_widget(output_list, inner_area);
+    
+    // Draw a fill rectangle behind the currently selected line for vim-like highlighting
+    if app.panel_focus == crate::app::PanelFocus::Output && !app.results.is_empty() {
+        let selected_idx = app.output_selected_idx;
+        if selected_idx < app.results.len() {
+            // Calculate the y-position of the selected line
+            let y_position = inner_area.y + selected_idx as u16;
+            
+            // Only highlight if the line is within the visible area
+            if y_position >= inner_area.y && y_position < inner_area.y + inner_area.height {
+                // Create a rectangle that spans the entire width of the inner area
+                let highlight_area = Rect {
+                    x: inner_area.x,
+                    y: y_position,
+                    width: inner_area.width,
+                    height: 1,
+                };
+                
+                // Create a blank paragraph with the highlight style
+                let highlight = Paragraph::new("")
+                    .style(Style::default().bg(Color::DarkGray));
+                
+                // Render the highlight underneath the text
+                f.render_widget(highlight, highlight_area);
+            }
+        }
+    }
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {

@@ -14,6 +14,8 @@ pub struct App {
     pub status_message: Option<String>, // Status message to display in the status bar
     pub input_mode: InputMode,         // Current input mode
     pub status_input: String,          // Input text for status bar when in input mode
+    pub panel_focus: PanelFocus,       // Which panel is currently focused
+    pub output_selected_idx: usize,    // Selected index in output panel when output is focused
     status_time: Option<Instant>,      // When the status message was set
     modified_lines: HashSet<usize>,    // Track which lines were modified since last evaluation
     cached_variables: HashMap<String, Value>, // Cache variables from previous evaluations
@@ -24,6 +26,13 @@ pub struct App {
 pub enum InputMode {
     Normal,    // Regular calculator mode
     FilePath,  // Entering a file path in the status bar
+}
+
+// Track which panel has focus
+#[derive(PartialEq, Clone, Copy)]
+pub enum PanelFocus {
+    Input,
+    Output,
 }
 
 impl App {
@@ -39,6 +48,8 @@ impl App {
             status_message: None,
             input_mode: InputMode::Normal,
             status_input: String::new(),
+            panel_focus: PanelFocus::Input,
+            output_selected_idx: 0,
             status_time: None,
             modified_lines: HashSet::new(),
             cached_variables: HashMap::new(),
@@ -414,5 +425,97 @@ impl App {
 
     fn cursor_at_end_of_line(&self) -> bool {
         self.cursor_pos.1 == self.lines[self.cursor_pos.0].len()
+    }
+
+    // Toggle panel focus between input and output
+    pub fn toggle_panel_focus(&mut self) {
+        match self.panel_focus {
+            PanelFocus::Input => {
+                self.panel_focus = PanelFocus::Output;
+                // Ensure the selected output index is valid
+                if !self.results.is_empty() {
+                    self.output_selected_idx = self.output_selected_idx.min(self.results.len() - 1);
+                } else {
+                    self.output_selected_idx = 0;
+                }
+            },
+            PanelFocus::Output => {
+                self.panel_focus = PanelFocus::Input;
+            }
+        }
+    }
+    
+    // Handle navigation in the output panel
+    pub fn navigate_output_panel(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.output_selected_idx > 0 {
+                    self.output_selected_idx -= 1;
+                }
+            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.results.is_empty() && self.output_selected_idx < self.results.len() - 1 {
+                    self.output_selected_idx += 1;
+                }
+            },
+            KeyCode::Home | KeyCode::Char('g') => {
+                // Go to top (vim gg)
+                self.output_selected_idx = 0;
+            },
+            KeyCode::End | KeyCode::Char('G') => {
+                // Go to bottom (vim G)
+                if !self.results.is_empty() {
+                    self.output_selected_idx = self.results.len() - 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    
+    // Copy selected output to clipboard
+    pub fn copy_selected_output_to_clipboard(&self) -> Result<(), String> {
+        if self.results.is_empty() || self.output_selected_idx >= self.results.len() {
+            return Err("No output selected to copy".to_string());
+        }
+        
+        let output = &self.results[self.output_selected_idx];
+        if output.is_empty() {
+            return Err("Selected output is empty".to_string());
+        }
+        
+        // In WSL, simply use clip.exe which is the most reliable method
+        if let Ok(_) = std::env::var("WSL_DISTRO_NAME") {
+            match std::process::Command::new("clip.exe")
+                .stdin(std::process::Stdio::piped())
+                .spawn() 
+            {
+                Ok(mut child) => {
+                    if let Some(stdin) = child.stdin.as_mut() {
+                        match std::io::Write::write_all(stdin, output.as_bytes()) {
+                            Ok(_) => {
+                                // Wait for the process to complete to ensure the text is copied
+                                if let Ok(_) = child.wait() {
+                                    return Ok(());
+                                }
+                            },
+                            Err(e) => return Err(format!("Failed to write to clip.exe: {}", e)),
+                        }
+                    }
+                    return Err("Failed to access clip.exe stdin".to_string());
+                },
+                Err(e) => return Err(format!("Failed to launch clip.exe: {}", e)),
+            }
+        }
+        
+        // For non-WSL environments, try arboard
+        match arboard::Clipboard::new() {
+            Ok(mut clipboard) => {
+                match clipboard.set_text(output.clone()) {
+                    Ok(_) => return Ok(()),
+                    Err(e) => return Err(format!("Clipboard error: {}", e)),
+                }
+            },
+            Err(e) => return Err(format!("Failed to access clipboard: {}", e)),
+        }
     }
 } 
