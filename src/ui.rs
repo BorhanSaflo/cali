@@ -13,8 +13,9 @@ use once_cell::sync::Lazy;
 // Define regex patterns for syntax highlighting
 static NUMBER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d+(?:\.\d+)?)").unwrap());
 static PERCENTAGE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d+(?:\.\d+)?%)").unwrap());
-static UNIT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z]+)\b").unwrap());
+static UNIT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z][A-Za-z0-9_]*)\b").unwrap());
 static OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"([\+\-\*/\^=])").unwrap());
+static BRACKET_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"([\(\)\[\]\{\}])").unwrap());
 static KEYWORD_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(to|in|of|what|is|next)\b").unwrap());
 static SPECIAL_WORD_REGEX: Lazy<Regex> = Lazy::new(|| 
     Regex::new(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|day|weeks|months|days)\b").unwrap()
@@ -173,6 +174,22 @@ fn highlight_syntax(text: &str) -> Line {
             spans.push((m.start(), m.end(), Span::styled(
                 m.as_str().to_string(),
                 Style::default().fg(Color::LightRed)
+            )));
+        }
+    }
+    
+    // Find and highlight brackets
+    for captures in BRACKET_REGEX.captures_iter(text) {
+        if let Some(m) = captures.get(1) {
+            // Skip if already processed
+            if is_already_processed(&processed_indices, m.start(), m.end()) {
+                continue;
+            }
+            
+            mark_as_processed(&mut processed_indices, m.start(), m.end());
+            spans.push((m.start(), m.end(), Span::styled(
+                m.as_str().to_string(),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
             )));
         }
     }

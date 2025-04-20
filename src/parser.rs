@@ -10,6 +10,7 @@ static PERCENT_OF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+)%\s+of\s+(.+)"
 static VAR_OF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\w+)\s+of\s+(.+)").unwrap());
 static PERCENT_OF_WHAT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+)\s+of\s+what\s+is\s+(.+)").unwrap());
 static DATE_EXPR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)next\s+(\w+)(?:\s*\+\s*(\d+)\s+(\w+))?").unwrap());
+static PARENTHESIS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*\((.+)\)\s*$").unwrap());
 static ADD_SUB_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+?)([+\-])(.+)").unwrap());
 static MUL_DIV_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(.+?)([*/^%])(.+)").unwrap());
 static NUMBER_UNIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(-?\d+(?:\.\d+)?)\s*([a-zA-Z][a-zA-Z0-9]*)").unwrap());
@@ -80,6 +81,11 @@ pub fn parse_line(line: &str, variables: &HashMap<String, Value>) -> Expr {
         return date_expr;
     }
     
+    // Try to parse as an expression within parentheses
+    if let Some(paren_expr) = parse_parentheses(line, variables) {
+        return paren_expr;
+    }
+    
     // Try to parse as a binary operation
     if let Some(binary_op) = parse_binary_op(line, variables) {
         return binary_op;
@@ -109,7 +115,16 @@ fn parse_assignment(line: &str, variables: &HashMap<String, Value>) -> Option<Ex
     let parts: Vec<&str> = line.splitn(2, '=').collect();
     if parts.len() == 2 {
         let var_name = parts[0].trim().to_string();
-        let expr = parse_line(parts[1], variables);
+        let expr_str = parts[1].trim();
+        
+        // Special case for percentage values
+        if expr_str.ends_with("%") {
+            if let Ok(num) = expr_str[..expr_str.len()-1].trim().parse::<f64>() {
+                return Some(Expr::Assignment(var_name, Box::new(Expr::Percentage(num))));
+            }
+        }
+        
+        let expr = parse_line(expr_str, variables);
         Some(Expr::Assignment(var_name, Box::new(expr)))
     } else {
         None
@@ -177,9 +192,95 @@ fn parse_date_expression(line: &str) -> Option<Expr> {
     }
 }
 
+// Parse an expression enclosed in parentheses
+fn parse_parentheses(line: &str, variables: &HashMap<String, Value>) -> Option<Expr> {
+    // Check if the entire expression is wrapped in parentheses
+    if let Some(caps) = PARENTHESIS_RE.captures(line) {
+        let inner_expr = &caps[1];
+        let parsed_inner = parse_line(inner_expr, variables);
+        return Some(parsed_inner);
+    }
+    
+    // If there are parentheses but they don't enclose the entire expression,
+    // we'll handle them in the binary operation parsing
+    None
+}
+
 // Parse a binary operation (expr op expr)
 fn parse_binary_op(line: &str, variables: &HashMap<String, Value>) -> Option<Expr> {
-    // First, check for addition or subtraction
+    // Find the outermost +/- operator by tracking parentheses balance
+    let mut paren_balance = 0;
+    let mut last_add_sub_pos = None;
+    
+    for (i, c) in line.char_indices() {
+        match c {
+            '(' => paren_balance += 1,
+            ')' => paren_balance -= 1,
+            '+' | '-' => {
+                if paren_balance == 0 {
+                    last_add_sub_pos = Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    // If we found a balanced +/- operator outside parentheses
+    if let Some(pos) = last_add_sub_pos {
+        let left = &line[..pos].trim();
+        let op_char = line.chars().nth(pos).unwrap();
+        let right = &line[pos+1..].trim();
+        
+        let left_expr = parse_line(left, variables);
+        let right_expr = parse_line(right, variables);
+        
+        let op = match op_char {
+            '+' => Op::Add,
+            '-' => Op::Subtract,
+            _ => unreachable!(),
+        };
+        
+        return Some(Expr::BinaryOp(Box::new(left_expr), op, Box::new(right_expr)));
+    }
+    
+    // If no +/- found, look for outermost */^% operators
+    let mut paren_balance = 0;
+    let mut last_mul_div_pos = None;
+    
+    for (i, c) in line.char_indices() {
+        match c {
+            '(' => paren_balance += 1,
+            ')' => paren_balance -= 1,
+            '*' | '/' | '^' | '%' => {
+                if paren_balance == 0 {
+                    last_mul_div_pos = Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    // If we found a balanced */^% operator outside parentheses
+    if let Some(pos) = last_mul_div_pos {
+        let left = &line[..pos].trim();
+        let op_char = line.chars().nth(pos).unwrap();
+        let right = &line[pos+1..].trim();
+        
+        let left_expr = parse_line(left, variables);
+        let right_expr = parse_line(right, variables);
+        
+        let op = match op_char {
+            '*' => Op::Multiply,
+            '/' => Op::Divide,
+            '^' => Op::Power,
+            '%' => Op::Modulo,
+            _ => unreachable!(),
+        };
+        
+        return Some(Expr::BinaryOp(Box::new(left_expr), op, Box::new(right_expr)));
+    }
+    
+    // Fallback to regex-based parsing for simpler cases
     if let Some(caps) = ADD_SUB_RE.captures(line) {
         let left = parse_line(&caps[1], variables);
         let right = parse_line(&caps[3], variables);
@@ -230,11 +331,16 @@ fn parse_unit_value(text: &str) -> Option<(f64, String)> {
 fn parse_simple_value(line: &str, variables: &HashMap<String, Value>) -> Expr {
     let line = line.trim();
     
-    // Try to parse as a percentage (e.g., "8%")
+    // Try to parse as a percentage (e.g., "8%") - this must come before parentheses check
     if line.ends_with("%") {
         if let Ok(num) = line[..line.len()-1].trim().parse::<f64>() {
             return Expr::Percentage(num);
         }
+    }
+    
+    // Check for parentheses
+    if let Some(caps) = PARENTHESIS_RE.captures(line) {
+        return parse_line(&caps[1], variables);
     }
     
     // Try to parse as a number with a unit
@@ -382,6 +488,98 @@ mod tests {
                 assert_eq!(unit, "weeks");
             },
             _ => panic!("Expected DateOffset expression"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_parentheses() {
+        let variables = HashMap::new();
+        
+        // Test basic parentheses parsing
+        match parse_line("(5 + 3)", &variables) {
+            Expr::BinaryOp(left, Op::Add, right) => {
+                match *left {
+                    Expr::Number(n) => assert_eq!(n, 5.0),
+                    _ => panic!("Expected Number expression on left side"),
+                }
+                match *right {
+                    Expr::Number(n) => assert_eq!(n, 3.0),
+                    _ => panic!("Expected Number expression on right side"),
+                }
+            },
+            _ => panic!("Expected BinaryOp expression"),
+        }
+        
+        // Test nested parentheses
+        match parse_line("(2 * (3 + 4))", &variables) {
+            Expr::BinaryOp(left, Op::Multiply, right) => {
+                match *left {
+                    Expr::Number(n) => assert_eq!(n, 2.0),
+                    _ => panic!("Expected Number expression on left side"),
+                }
+                match *right {
+                    Expr::BinaryOp(inner_left, Op::Add, inner_right) => {
+                        match *inner_left {
+                            Expr::Number(n) => assert_eq!(n, 3.0),
+                            _ => panic!("Expected Number expression on inner left side"),
+                        }
+                        match *inner_right {
+                            Expr::Number(n) => assert_eq!(n, 4.0),
+                            _ => panic!("Expected Number expression on inner right side"),
+                        }
+                    },
+                    _ => panic!("Expected BinaryOp expression on right side"),
+                }
+            },
+            _ => panic!("Expected BinaryOp expression"),
+        }
+        
+        // Test order of operations with parentheses
+        match parse_line("2 + 3 * 4", &variables) {
+            Expr::BinaryOp(left, Op::Add, right) => {
+                match *left {
+                    Expr::Number(n) => assert_eq!(n, 2.0),
+                    _ => panic!("Expected Number expression on left side"),
+                }
+                match *right {
+                    Expr::BinaryOp(inner_left, Op::Multiply, inner_right) => {
+                        match *inner_left {
+                            Expr::Number(n) => assert_eq!(n, 3.0),
+                            _ => panic!("Expected Number expression on inner left side"),
+                        }
+                        match *inner_right {
+                            Expr::Number(n) => assert_eq!(n, 4.0),
+                            _ => panic!("Expected Number expression on inner right side"),
+                        }
+                    },
+                    _ => panic!("Expected BinaryOp expression on right side"),
+                }
+            },
+            _ => panic!("Expected BinaryOp expression"),
+        }
+        
+        // Test parentheses changing the order of operations
+        match parse_line("(2 + 3) * 4", &variables) {
+            Expr::BinaryOp(left, Op::Multiply, right) => {
+                match *left {
+                    Expr::BinaryOp(inner_left, Op::Add, inner_right) => {
+                        match *inner_left {
+                            Expr::Number(n) => assert_eq!(n, 2.0),
+                            _ => panic!("Expected Number expression on inner left side"),
+                        }
+                        match *inner_right {
+                            Expr::Number(n) => assert_eq!(n, 3.0),
+                            _ => panic!("Expected Number expression on inner right side"),
+                        }
+                    },
+                    _ => panic!("Expected BinaryOp expression on left side"),
+                }
+                match *right {
+                    Expr::Number(n) => assert_eq!(n, 4.0),
+                    _ => panic!("Expected Number expression on right side"),
+                }
+            },
+            _ => panic!("Expected BinaryOp expression"),
         }
     }
 } 

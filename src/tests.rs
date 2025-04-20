@@ -722,4 +722,99 @@ mod tests {
             _ => panic!("Expected unit value, got {:?}", result),
         }
     }
+
+    #[test]
+    fn test_evaluate_with_parentheses() {
+        let mut variables = HashMap::new();
+        
+        // Test simple parenthesized expression
+        let expr = parse_line("(2 + 3)", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Number(n) => assert_eq!(n, 5.0),
+            _ => panic!("Expected Number value"),
+        }
+        
+        // Test that BEDMAS is followed without parentheses
+        let expr = parse_line("2 + 3 * 4", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Number(n) => assert_eq!(n, 14.0), // 2 + (3 * 4) = 2 + 12 = 14
+            _ => panic!("Expected Number value"),
+        }
+        
+        // Test that parentheses override default precedence
+        let expr = parse_line("(2 + 3) * 4", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Number(n) => assert_eq!(n, 20.0), // (2 + 3) * 4 = 5 * 4 = 20
+            _ => panic!("Expected Number value"),
+        }
+        
+        // Test nested parentheses
+        let expr = parse_line("2 * (3 + (4 - 1))", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Number(n) => assert_eq!(n, 12.0), // 2 * (3 + 3) = 2 * 6 = 12
+            _ => panic!("Expected Number value"),
+        }
+        
+        // Test more complex expressions with multiple operations
+        let expr = parse_line("(2 + 3) * 4 / 2 - 1", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Number(n) => assert_eq!(n, 9.0), // (5 * 4) / 2 - 1 = 20 / 2 - 1 = 10 - 1 = 9
+            _ => panic!("Expected Number value"),
+        }
+        
+        // Test parentheses with unit values
+        let expr = parse_line("(2 + 3) * 4 USD", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Unit(n, u) => {
+                assert_eq!(n, 20.0);
+                assert_eq!(u, "USD");
+            },
+            _ => panic!("Expected Unit value"),
+        }
+    }
+
+    #[test]
+    fn test_evaluate_parentheses_with_units() {
+        let mut variables = HashMap::new();
+        
+        // Test parentheses with unit values - basic
+        let expr = parse_line("(10 USD + 5 USD) * 2", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Unit(v, u) => {
+                assert_eq!(v, 30.0); // (10 + 5) * 2 = 30
+                assert_eq!(u, "USD");
+            },
+            _ => panic!("Expected Unit value"),
+        }
+        
+        // Test nested parentheses with unit values
+        let expr = parse_line("10 USD * (1 + (5 / 100))", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Unit(v, u) => {
+                assert_eq!(v, 10.5); // 10 * 1.05 = 10.5
+                assert_eq!(u, "USD");
+            },
+            _ => panic!("Expected Unit value"),
+        }
+        
+        // Test currency conversion with parentheses
+        let expr = parse_line("(10 USD + 5 USD) in EUR", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Unit(v, u) => {
+                assert!(v > 0.0); // Should be a positive EUR value
+                assert_eq!(u, "EUR");
+            },
+            _ => panic!("Expected Unit value"),
+        }
+        
+        // Test parentheses with different order of operations
+        let expr = parse_line("2 * (3 USD + 4 USD)", &variables);
+        match evaluate(&expr, &mut variables) {
+            Value::Unit(v, u) => {
+                assert_eq!(v, 14.0); // 2 * (3 + 4) = 2 * 7 = 14
+                assert_eq!(u, "USD");
+            },
+            _ => panic!("Expected Unit value"),
+        }
+    }
 } 

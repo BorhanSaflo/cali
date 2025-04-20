@@ -47,28 +47,10 @@ impl std::fmt::Display for Value {
                                 write!(f, "${:.2}", v)
                             }
                         },
-                        "EUR" => {
-                            if v.fract() == 0.0 {
-                                write!(f, "€{:.0}", v)
-                            } else {
-                                write!(f, "€{:.2}", v)
-                            }
-                        },
-                        "GBP" => {
-                            if v.fract() == 0.0 {
-                                write!(f, "£{:.0}", v)
-                            } else {
-                                write!(f, "£{:.2}", v)
-                            }
-                        },
-                        // For other currencies, use the regular format
-                        _ => {
-                            if v.fract() == 0.0 {
-                                write!(f, "{:.0} {}", v, u)
-                            } else {
-                                write!(f, "{:.2} {}", v, u)
-                            }
-                        }
+                        "EUR" => write!(f, "€{:.2}", v),
+                        "GBP" => write!(f, "£{:.2}", v),
+                        // For other currencies, use the regular format but always with 2 decimal places
+                        _ => write!(f, "{:.2} {}", v, u)
                     }
                 } else if v.fract() == 0.0 {
                     write!(f, "{:.0} {}", v, u)
@@ -149,14 +131,30 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
         (Value::Number(a), Op::Multiply, Value::Number(b)) => Value::Number(a * b),
         
         // Percentage operations
-        (Value::Number(a), Op::Multiply, Value::Percentage(p)) => Value::Number(a * (p / 100.0)),
         (Value::Percentage(p), Op::Multiply, Value::Number(a)) => Value::Number((p / 100.0) * a),
+        (Value::Number(a), Op::Multiply, Value::Percentage(p)) => Value::Number(a * (p / 100.0)),
         
-        // Add support for addition and subtraction with percentages
         (Value::Number(a), Op::Add, Value::Percentage(p)) => Value::Number(a + (a * p / 100.0)),
         (Value::Unit(a, unit), Op::Add, Value::Percentage(p)) => Value::Unit(a + (a * p / 100.0), unit),
         (Value::Number(a), Op::Subtract, Value::Percentage(p)) => Value::Number(a - (a * p / 100.0)),
         (Value::Unit(a, unit), Op::Subtract, Value::Percentage(p)) => Value::Unit(a - (a * p / 100.0), unit),
+        
+        (Value::Percentage(p), Op::Add, Value::Number(a)) => Value::Number(a + (a * p / 100.0)),
+        (Value::Percentage(p), Op::Add, Value::Unit(a, unit)) => Value::Unit(a + (a * p / 100.0), unit),
+        (Value::Percentage(p), Op::Subtract, Value::Number(a)) => Value::Number((p / 100.0) * a),
+        (Value::Percentage(p), Op::Subtract, Value::Unit(a, unit)) => Value::Unit((p / 100.0) * a, unit),
+        
+        // Add support for percentages with percentages
+        (Value::Percentage(p1), Op::Add, Value::Percentage(p2)) => Value::Percentage(p1 + p2),
+        (Value::Percentage(p1), Op::Subtract, Value::Percentage(p2)) => Value::Percentage(p1 - p2),
+        (Value::Percentage(p1), Op::Multiply, Value::Percentage(p2)) => Value::Percentage((p1 / 100.0) * p2),
+        (Value::Percentage(p1), Op::Divide, Value::Percentage(p2)) => {
+            if p2 == 0.0 {
+                Value::Error("Division by zero".to_string())
+            } else {
+                Value::Percentage(p1 / p2 * 100.0)
+            }
+        },
         
         (Value::Number(a), Op::Divide, Value::Number(b)) => {
             if b == 0.0 {
@@ -786,6 +784,7 @@ pub fn evaluate_lines(lines: &[String], variables: &mut HashMap<String, Value>) 
                     // Store the variable for future use
                     variables.insert(name.clone(), (**value).clone());
                 }
+                // Format the result
                 format!("{}", result)
             }
         })
