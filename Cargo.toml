@@ -21,7 +21,7 @@ arboard = "3.3.0"
 
 [package.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml syntax)
-cargo-dist-version = "0.27.0"
+cargo-dist-version = "0.28.0"
 # The installers to generate for each app
 installers = ["shell", "powershell", "msi"]
 # Target platforms to build for
