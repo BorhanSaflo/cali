@@ -3,6 +3,7 @@ name = "cali"
 version = "0.5.2"
 edition = "2024"
 description = "A terminal calculator with real-time evaluation, unit conversions, and natural language expressions."
+authors = ["Borhan Saflo"]
 license = "MIT"
 repository = "https://github.com/BorhanSaflo/cali"
 documentation = "https://github.com/BorhanSaflo/cali#readme"
@@ -19,6 +20,11 @@ reqwest = { version = "0.11", features = ["blocking", "json"] }
 serde_json = "1.0"
 arboard = "3.3.0"
 
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 [package.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml syntax)
 cargo-dist-version = "0.28.0"
@@ -28,3 +34,9 @@ installers = ["shell", "powershell", "msi"]
 targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu", "x86_64-apple-darwin"]
 # Publish to crates.io when releasing
 publish = true
+
+[package.metadata.wix]
+upgrade-guid = "84F568F9-3A00-41C7-9C37-8CD8359101D0"
+path-guid = "7DFBDB74-C368-4CB9-806F-BA7FFC11FC7E"
+license = false
+eula = false
