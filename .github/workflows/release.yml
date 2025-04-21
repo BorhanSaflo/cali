@@ -52,25 +52,32 @@ jobs:
         # Extract version from tag (remove the 'v' prefix)
         VERSION=${GITHUB_REF#refs/tags/v}
         echo "VERSION=$VERSION" >> $GITHUB_ENV
+        
+        # Set the output file name based on OS
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          echo "OUTPUT_FILE=cali-windows-amd64-$VERSION.exe" >> $GITHUB_ENV
+        else
+          echo "OUTPUT_FILE=${{ matrix.asset_name }}-$VERSION" >> $GITHUB_ENV
+        fi
     
     - name: Rename binary
       shell: bash
       run: |
         mkdir -p release
-        cp target/release/${{ matrix.artifact_name }} release/${{ matrix.asset_name }}-${{ env.VERSION }}
+        cp target/release/${{ matrix.artifact_name }} release/${{ env.OUTPUT_FILE }}
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.asset_name }}-${{ env.VERSION }}
-        path: release/${{ matrix.asset_name }}-${{ env.VERSION }}
+        name: ${{ env.OUTPUT_FILE }}
+        path: release/${{ env.OUTPUT_FILE }}
     
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/v')
       with:
-        files: release/${{ matrix.asset_name }}-${{ env.VERSION }}
+        files: release/${{ env.OUTPUT_FILE }}
         name: Release ${{ github.ref_name }}
         draft: false
         prerelease: false
