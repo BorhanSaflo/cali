@@ -55,11 +55,13 @@ fn draw_header(f: &mut Frame, area: Rect) {
     let header_block = Block::default()
         .style(Style::default());
     
-    // Create a paragraph with the simple text
-    let header = Paragraph::new("Cali")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-        .block(header_block)
-        .alignment(Alignment::Left);
+    // Create a paragraph with the Cali text and version
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled("Cali", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
+    ]))
+    .block(header_block)
+    .alignment(Alignment::Left);
 
     f.render_widget(header, area);
 }
