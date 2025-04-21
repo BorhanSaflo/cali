@@ -1,6 +1,6 @@
 [package]
 name = "cali"
-version = "0.4.0"
+version = "0.4.3"
 edition = "2024"
 description = "A terminal calculator with real-time evaluation, unit conversions, and natural language expressions."
 license = "MIT"
@@ -21,7 +21,7 @@ arboard = "3.3.0"
 
 [package.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml syntax)
-cargo-dist-version = "0.4.0"
+cargo-dist-version = "0.4.3"
 # The installers to generate for each app
 installers = ["shell", "powershell", "msi"]
 # Target platforms to build for
