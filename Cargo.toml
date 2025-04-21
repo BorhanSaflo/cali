@@ -1,6 +1,6 @@
 [package]
 name = "cali"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2024"
 description = "A terminal calculator with real-time evaluation, unit conversions, and natural language expressions."
 authors = ["Borhan Saflo"]
