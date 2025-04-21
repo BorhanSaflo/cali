@@ -1,4 +1,4 @@
-name: Build and Release
+name: Release
 
 on:
   push:
@@ -11,74 +11,38 @@ env:
 permissions:
   contents: write
   packages: write
-  
-jobs:
-  build-and-release:
-    name: Build and Release for ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: cali
-            asset_name: cali-linux-amd64
-          - os: windows-latest
-            artifact_name: cali.exe
-            asset_name: cali-windows-amd64.exe
-          - os: macos-latest
-            artifact_name: cali
-            asset_name: cali-macos-amd64
 
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-        profile: minimal
-    
-    - name: Build
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --release
-    
-    - name: Set version variable
-      id: version
-      shell: bash
-      run: |
-        # Extract version from tag (remove the 'v' prefix)
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-        
-        # Set the output file name based on OS
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          echo "OUTPUT_FILE=cali-windows-amd64-$VERSION.exe" >> $GITHUB_ENV
-        else
-          echo "OUTPUT_FILE=${{ matrix.asset_name }}-$VERSION" >> $GITHUB_ENV
-        fi
-    
-    - name: Rename binary
-      shell: bash
-      run: |
-        mkdir -p release
-        cp target/release/${{ matrix.artifact_name }} release/${{ env.OUTPUT_FILE }}
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.OUTPUT_FILE }}
-        path: release/${{ env.OUTPUT_FILE }}
-    
-    - name: Create Release
-      id: create_release
-      uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/v')
-      with:
-        files: release/${{ env.OUTPUT_FILE }}
-        name: Release ${{ github.ref_name }}
-        draft: false
-        prerelease: false
-        generate_release_notes: true 
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+
+      - name: Install release tools
+        run: |
+          cargo install cargo-dist
+
+      - name: Build and package
+        run: cargo dist build --target=x86_64-unknown-linux-gnu --target=x86_64-pc-windows-gnu --target=x86_64-apple-darwin
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            target/dist/*.tar.gz
+            target/dist/*.zip
+            target/dist/*.msi
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true 
