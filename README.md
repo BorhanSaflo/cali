@@ -1,16 +1,16 @@
 # Cali
 
-Cali is a terminal-based calculator that allows you to perform calculations using natural language expressions. It supports various features like unit conversions, date calculations, and real-time evaluation.
+Cali is a terminal-based calculator that interprets natural language for real-time calculations, including arithmetic, currency conversions, unit conversions, and date/time operations.
 
 ![Cali Demo](./assets/cali-demo.gif)
 
 ## Installation
 
-### Prerequisites
+### Option 1: Download Pre-compiled Binaries
 
-- Rust and Cargo (1.56.0 or newer)
+Download the latest release for your platform from the [releases page](https://github.com/BorhanSaflo/cali/releases):
 
-### Building from Source
+### Option 2: Building from Source
 
 1. Clone the repository:
    ```bash
