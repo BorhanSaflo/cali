@@ -7,6 +7,7 @@ authors = ["Borhan Saflo"]
 license = "MIT"
 repository = "https://github.com/BorhanSaflo/cali"
 documentation = "https://github.com/BorhanSaflo/cali#readme"
+homepage = "https://github.com/BorhanSaflo/cali#readme"
 readme = "README.md"
 
 [dependencies]
@@ -25,16 +26,3 @@ arboard = "3.3.0"
 inherits = "release"
 lto = "thin"
 
-[package.metadata.dist]
-# The installers to generate for each app
-installers = ["shell", "powershell", "msi"]
-# Target platforms to build for
-targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu", "x86_64-apple-darwin"]
-# Publish to crates.io when releasing
-publish = true
-
-[package.metadata.wix]
-upgrade-guid = "84F568F9-3A00-41C7-9C37-8CD8359101D0"
-path-guid = "7DFBDB74-C368-4CB9-806F-BA7FFC11FC7E"
-license = false
-eula = false
