@@ -6,17 +6,24 @@
 
 ## Installation
 
-### Option 1: Install with Cargo
+### Option 1: Install with Homebrew
+
+```bash
+brew tap borhansaflo/cali
+brew install cali
+```
+
+### Option 2: Install with Cargo
 
 ```bash
 cargo install cali
 ```
 
-### Option 2: Download Pre-compiled Binaries
+### Option 3: Download Pre-compiled Binaries
 
 Download the latest release for your platform from the [releases page](https://github.com/BorhanSaflo/cali/releases)
 
-### Option 3: Building from Source
+### Option 4: Building from Source
 
 1. Clone the repository:
    ```bash
