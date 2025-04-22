@@ -69,93 +69,114 @@ fn main() -> Result<(), io::Error> {
 
         // Handle input with timeout to allow periodic ticks
         if crossterm::event::poll(tick_rate)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match app.input_mode {
-                        app::InputMode::Normal => {
-                            // Handle keys in normal mode
-                            match key.code {
-                                KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    break;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        match app.input_mode {
+                            app::InputMode::Normal => {
+                                // Handle keys in normal mode
+                                match key.code {
+                                    KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                        break;
+                                    }
+                                    KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                        // Check if we already have a file path
+                                        if let Some(path) = &current_file_path {
+                                            // Save to the existing path
+                                            match save_file_from_app(path, &app) {
+                                                Ok(_) => {
+                                                    // Show success message in status bar
+                                                    app.set_status_message(format!("File saved successfully to '{}'", path));
+                                                }
+                                                Err(e) => {
+                                                    // Show error message in status bar
+                                                    app.set_status_message(format!("Error saving file: {}", e));
+                                                }
+                                            }
+                                        } else {
+                                            // Need to get a file path from the user
+                                            // Switch to file path input mode
+                                            app.set_input_mode(app::InputMode::FilePath);
+                                        }
+                                    }
+                                    KeyCode::Tab => {
+                                        // Switch focus between panels
+                                        app.toggle_panel_focus();
+                                    }
+                                    _ => {
+                                        match app.panel_focus {
+                                            app::PanelFocus::Input => {
+                                                // Process input normally
+                                                app.handle_key(key);
+                                            }
+                                            app::PanelFocus::Output => {
+                                                // Handle navigation in output panel
+                                                match key.code {
+                                                    KeyCode::Up | KeyCode::Down | 
+                                                    KeyCode::Char('j') | KeyCode::Char('k') |
+                                                    KeyCode::Home | KeyCode::End |
+                                                    KeyCode::Char('g') | KeyCode::Char('G') => {
+                                                        app.navigate_output_panel(key.code);
+                                                    }
+                                                    KeyCode::Enter | KeyCode::Char('y') => {
+                                                        // Copy selected line to clipboard (y for "yank" in vim)
+                                                        match app.copy_selected_output_to_clipboard() {
+                                                            Ok(_) => {
+                                                                app.set_status_message("Copied to clipboard".to_string());
+                                                            }
+                                                            Err(e) => {
+                                                                app.set_status_message(format!("Error: {}", e));
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    // Check if we already have a file path
-                                    if let Some(path) = &current_file_path {
-                                        // Save to the existing path
-                                        match save_file_from_app(path, &app) {
+                            },
+                            app::InputMode::FilePath => {
+                                // Handle file path input
+                                if let Some(path) = app.handle_status_input(key) {
+                                    if !path.is_empty() {
+                                        // Save file
+                                        match save_file_from_app(&path, &app) {
                                             Ok(_) => {
-                                                // Show success message in status bar
+                                                current_file_path = Some(path.clone());
                                                 app.set_status_message(format!("File saved successfully to '{}'", path));
                                             }
                                             Err(e) => {
-                                                // Show error message in status bar
                                                 app.set_status_message(format!("Error saving file: {}", e));
                                             }
                                         }
                                     } else {
-                                        // Need to get a file path from the user
-                                        // Switch to file path input mode
-                                        app.set_input_mode(app::InputMode::FilePath);
+                                        app.set_status_message("Save cancelled - no file path provided.".to_string());
                                     }
-                                }
-                                KeyCode::Tab => {
-                                    // Switch focus between panels
-                                    app.toggle_panel_focus();
-                                }
-                                _ => {
-                                    match app.panel_focus {
-                                        app::PanelFocus::Input => {
-                                            // Process input normally
-                                            app.handle_key(key);
-                                        }
-                                        app::PanelFocus::Output => {
-                                            // Handle navigation in output panel
-                                            match key.code {
-                                                KeyCode::Up | KeyCode::Down | 
-                                                KeyCode::Char('j') | KeyCode::Char('k') |
-                                                KeyCode::Home | KeyCode::End |
-                                                KeyCode::Char('g') | KeyCode::Char('G') => {
-                                                    app.navigate_output_panel(key.code);
-                                                }
-                                                KeyCode::Enter | KeyCode::Char('y') => {
-                                                    // Copy selected line to clipboard (y for "yank" in vim)
-                                                    match app.copy_selected_output_to_clipboard() {
-                                                        Ok(_) => {
-                                                            app.set_status_message("Copied to clipboard".to_string());
-                                                        }
-                                                        Err(e) => {
-                                                            app.set_status_message(format!("Error: {}", e));
-                                                        }
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        app::InputMode::FilePath => {
-                            // Handle file path input
-                            if let Some(path) = app.handle_status_input(key) {
-                                if !path.is_empty() {
-                                    // Save file
-                                    match save_file_from_app(&path, &app) {
-                                        Ok(_) => {
-                                            current_file_path = Some(path.clone());
-                                            app.set_status_message(format!("File saved successfully to '{}'", path));
-                                        }
-                                        Err(e) => {
-                                            app.set_status_message(format!("Error saving file: {}", e));
-                                        }
-                                    }
-                                } else {
-                                    app.set_status_message("Save cancelled - no file path provided.".to_string());
                                 }
                             }
                         }
                     }
-                }
+                },
+                Event::Mouse(mouse_event) => {
+                    match mouse_event.kind {
+                        event::MouseEventKind::Down(event::MouseButton::Left) => {
+                            // Try to handle click in input panel
+                            if let Some(area) = app.input_panel_area {
+                                if app.handle_mouse_click(mouse_event.column, mouse_event.row, area) {
+                                    continue;
+                                }
+                            }
+                            
+                            // If not handled by input panel, try output panel
+                            if let Some(area) = app.output_panel_area {
+                                app.handle_output_mouse_click(mouse_event.column, mouse_event.row, area);
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
             }
         } else {
             // No input received, this is a tick event

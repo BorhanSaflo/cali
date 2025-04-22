@@ -42,6 +42,20 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
         .split(main_chunks[1]);
 
+    // Store panel areas for mouse handling
+    app.input_panel_area = Some((
+        content_chunks[0].x,
+        content_chunks[0].y,
+        content_chunks[0].width,
+        content_chunks[0].height
+    ));
+    app.output_panel_area = Some((
+        content_chunks[1].x,
+        content_chunks[1].y,
+        content_chunks[1].width,
+        content_chunks[1].height
+    ));
+
     draw_input_panel(f, app, content_chunks[0]);
     draw_output_panel(f, app, content_chunks[1]);
     

@@ -19,6 +19,8 @@ pub struct App {
     status_time: Option<Instant>,      // When the status message was set
     modified_lines: HashSet<usize>,    // Track which lines were modified since last evaluation
     cached_variables: HashMap<String, Value>, // Cache variables from previous evaluations
+    pub input_panel_area: Option<(u16, u16, u16, u16)>,  // (x, y, width, height) of input panel
+    pub output_panel_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of output panel
 }
 
 // Input mode for the application
@@ -53,6 +55,8 @@ impl App {
             status_time: None,
             modified_lines: HashSet::new(),
             cached_variables: HashMap::new(),
+            input_panel_area: None,
+            output_panel_area: None,
         }
     }
 
@@ -517,5 +521,63 @@ impl App {
             },
             Err(e) => return Err(format!("Failed to access clipboard: {}", e)),
         }
+    }
+
+    // Handle mouse click events
+    pub fn handle_mouse_click(&mut self, x: u16, y: u16, area: (u16, u16, u16, u16)) -> bool {
+        let (input_x, input_y, input_width, input_height) = area;
+        
+        // Check if click is within input panel bounds (including borders)
+        if x >= input_x && x < input_x + input_width && 
+           y >= input_y && y < input_y + input_height {
+            // Switch focus to input panel
+            self.panel_focus = PanelFocus::Input;
+            
+            // If click is within the content area (excluding borders)
+            if x > input_x && x < input_x + input_width - 1 && 
+               y > input_y && y < input_y + input_height - 1 {
+                // Convert screen coordinates to text coordinates (accounting for borders)
+                let text_x = (x - input_x - 1) as usize;
+                let text_y = (y - input_y - 1) as usize;
+                
+                // Check if we have a line at this y position
+                if text_y < self.lines.len() {
+                    // Set cursor position
+                    self.cursor_pos.0 = text_y;
+                    // Set x position, clamped to line length
+                    self.cursor_pos.1 = text_x.min(self.lines[text_y].len());
+                }
+            }
+            return true;
+        }
+        
+        false
+    }
+
+    // Handle mouse click in output panel
+    pub fn handle_output_mouse_click(&mut self, x: u16, y: u16, area: (u16, u16, u16, u16)) -> bool {
+        let (output_x, output_y, output_width, output_height) = area;
+        
+        // Check if click is within output panel bounds
+        if x >= output_x && x < output_x + output_width && 
+           y >= output_y && y < output_y + output_height {
+            // Switch focus to output panel
+            self.panel_focus = PanelFocus::Output;
+            
+            // If click is within the content area (excluding borders)
+            if x > output_x && x < output_x + output_width - 1 && 
+               y > output_y && y < output_y + output_height - 1 {
+                // Convert screen coordinates to text coordinates
+                let text_y = (y - output_y - 1) as usize;
+                
+                // Check if we have a result at this y position
+                if text_y < self.results.len() {
+                    self.output_selected_idx = text_y;
+                }
+            }
+            return true;
+        }
+        
+        false
     }
 } 
