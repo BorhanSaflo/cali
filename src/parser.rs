@@ -53,7 +53,7 @@ pub fn parse_line(line: &str, variables: &HashMap<String, Value>) -> Expr {
     
     // Handle empty lines
     if line.is_empty() {
-        return Expr::Error("Empty expression".to_string());
+        return Expr::Error("Empty input".to_string());
     }
     
     // Try to parse as a setrate command
@@ -373,7 +373,17 @@ fn parse_simple_value(line: &str, variables: &HashMap<String, Value>) -> Expr {
     }
     
     // If all else fails, return an error expression
-    Expr::Error(format!("Cannot parse expression: {}", line))
+    let msg = if line.contains('+') || line.contains('-') || line.contains('*') || line.contains('/') {
+        "Invalid expression".to_string()
+    } else if line.contains('%') {
+        "Invalid percentage".to_string()
+    } else if line.chars().all(|c| c.is_alphabetic()) {
+        format!("'{line}' not found")
+    } else {
+        "Invalid input".to_string()
+    };
+    
+    Expr::Error(msg)
 }
 
 #[cfg(test)]

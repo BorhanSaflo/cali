@@ -336,12 +336,17 @@ fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
             
             // Apply styling to the line
             if result.starts_with("Error:") {
-                // For error messages, keep them red but with selection style if selected
+                // For error messages, style with red background and white text
                 ListItem::new(Line::from(Span::styled(result.clone(), 
                     if is_selected {
-                        Style::default().fg(Color::Red).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::White)
+                            .bg(Color::Red)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Red)
+                        Style::default()
+                            .fg(Color::White)
+                            .bg(Color::Red)
                     }
                 )))
             } else if result.is_empty() {

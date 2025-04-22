@@ -239,15 +239,21 @@ impl App {
             }
 
             // Format the result
-            let result_str = if self.last_keystroke.elapsed() < self.debounce_period && result.to_string().starts_with("Error:") {
+            let result_str = if self.last_keystroke.elapsed() < self.debounce_period && matches!(result, crate::evaluator::Value::Error(_)) {
                 String::new() // Hide errors during debounce period
             } else {
-                format!("{}", result)
+                match result {
+                    crate::evaluator::Value::Error(msg) => format!("Error: {}", msg),
+                    _ => format!("{}", result)
+                }
             };
             
             // Update the results
             self.results[line_idx] = result_str;
-            self.debounced_results[line_idx] = format!("{}", result);
+            self.debounced_results[line_idx] = match result {
+                crate::evaluator::Value::Error(msg) => format!("Error: {}", msg),
+                _ => format!("{}", result)
+            };
         }
     }
 
@@ -484,6 +490,11 @@ impl App {
         let output = &self.results[self.output_selected_idx];
         if output.is_empty() {
             return Err("Selected output is empty".to_string());
+        }
+
+        // Don't copy error messages
+        if output.starts_with("Error:") {
+            return Err("Cannot copy error messages".to_string());
         }
         
         // In WSL, simply use clip.exe which is the most reliable method

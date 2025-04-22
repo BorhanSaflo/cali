@@ -85,7 +85,7 @@ pub fn evaluate(expr: &Expr, variables: &mut HashMap<String, Value>) -> Value {
             if let Some(value) = variables.get(name) {
                 value.clone()
             } else {
-                Value::Error(format!("Unknown variable: {}", name))
+                Value::Error(format!("'{name}' not found"))
             }
         },
         
@@ -158,14 +158,14 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
         
         (Value::Number(a), Op::Divide, Value::Number(b)) => {
             if b == 0.0 {
-                Value::Error("Division by zero".to_string())
+                Value::Error("Cannot divide by 0".to_string())
             } else {
                 Value::Number(a / b)
             }
         },
         (Value::Number(a), Op::Modulo, Value::Number(b)) => {
             if b == 0.0 {
-                Value::Error("Modulo by zero".to_string())
+                Value::Error("Cannot use modulo with 0".to_string())
             } else {
                 Value::Number(a % b)
             }
@@ -185,7 +185,7 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
         },
         (Value::Unit(a, unit), Op::Divide, Value::Number(b)) => {
             if b == 0.0 {
-                Value::Error("Division by zero".to_string())
+                Value::Error("Cannot divide by 0".to_string())
             } else {
                 Value::Unit(a / b, unit)
             }
@@ -224,7 +224,7 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
                             _ => unreachable!(),
                         }
                     } else {
-                        Value::Error(format!("Cannot convert from {} to {}", unit_b, unit_a))
+                        Value::Error(format!("No rate for {unit_b} to {unit_a}"))
                     }
                 } else if let Some(converted_b) = convert_units(b, &normalized_unit_b, &normalized_unit_a) {
                     // For regular units, try to convert if possible
@@ -234,7 +234,7 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
                         _ => unreachable!(),
                     }
                 } else {
-                    Value::Error(format!("Cannot perform {:?} on {} and {}", op, unit_a, unit_b))
+                    Value::Error(format!("Cannot mix {unit_a} and {unit_b}"))
                 }
             }
         },
@@ -246,7 +246,23 @@ fn evaluate_binary_op(left: &Expr, op: &Op, right: &Expr, variables: &mut HashMa
             Value::Date(date - Duration::days(days as i64)),
             
         // Error for incompatible types
-        (a, op, b) => Value::Error(format!("Cannot perform {:?} on {:?} and {:?}", op, a, b)),
+        (a, _op, b) => Value::Error(format!("Cannot mix {a_type} and {b_type}",
+            a_type = match a {
+                Value::Number(_) => "number".to_string(),
+                Value::Percentage(_) => "percentage".to_string(),
+                Value::Unit(_, u) => u.clone(),
+                Value::Date(_) => "date".to_string(),
+                Value::Error(_) => "error".to_string(),
+                Value::Assignment(_, _) => "assignment".to_string(),
+            },
+            b_type = match b {
+                Value::Number(_) => "number".to_string(),
+                Value::Percentage(_) => "percentage".to_string(),
+                Value::Unit(_, u) => u.clone(),
+                Value::Date(_) => "date".to_string(),
+                Value::Error(_) => "error".to_string(),
+                Value::Assignment(_, _) => "assignment".to_string(),
+            })),
     }
 }
 
@@ -268,7 +284,7 @@ fn evaluate_percent_of(percent_expr: &Expr, value_expr: &Expr, variables: &mut H
         (Value::Percentage(p), Value::Unit(v, unit)) => {
             Value::Unit((p / 100.0) * v, unit)
         },
-        _ => Value::Error("Invalid percentage calculation".to_string()),
+        _ => Value::Error("Invalid percentage".to_string()),
     }
 }
 
@@ -301,14 +317,14 @@ fn convert_unit(value_expr: &Expr, target_unit: &str, variables: &mut HashMap<St
             // Attempt conversion
             match convert_units(v, &normalized_source_unit, &normalized_target_unit) {
                 Some(converted_value) => Value::Unit(converted_value, display_unit),
-                None => Value::Error(format!("Cannot convert from {} to {}", source_unit, target_unit))
+                None => Value::Error(format!("Cannot convert to {target_unit}")),
             }
         },
         Value::Number(v) => {
             // For unitless numbers, just apply the target unit
             Value::Unit(v, display_unit)
         },
-        _ => Value::Error(format!("Cannot convert value to {}. Try assigning the unit first with 'variable * 1 {}'", target_unit, target_unit)),
+        _ => Value::Error(format!("Cannot convert to {target_unit}")),
     }
 }
 
@@ -326,7 +342,7 @@ fn calculate_date_offset(day_name: &str, amount: i64, unit: &str) -> Value {
         "friday" => Weekday::Fri,
         "saturday" => Weekday::Sat,
         "sunday" => Weekday::Sun,
-        _ => return Value::Error(format!("Unknown day: {}", day_name)),
+        _ => return Value::Error(format!("Invalid day '{day_name}'")),
     };
     
     // Calculate days until next occurrence
@@ -347,7 +363,7 @@ fn calculate_date_offset(day_name: &str, amount: i64, unit: &str) -> Value {
             // Approximate month as 30 days
             next_day + Duration::days(amount * 30)
         },
-        _ => return Value::Error(format!("Unknown time unit: {}", unit)),
+        _ => return Value::Error(format!("Invalid unit '{unit}'")),
     };
     
     Value::Date(result_date)
