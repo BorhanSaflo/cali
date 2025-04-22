@@ -100,8 +100,12 @@ fn main() -> Result<(), io::Error> {
                                         }
                                     }
                                     KeyCode::Tab => {
-                                        // Switch focus between panels
-                                        app.toggle_panel_focus();
+                                        // Regular TAB goes forward
+                                        app.toggle_panel_focus(true);
+                                    }
+                                    KeyCode::BackTab => {
+                                        // SHIFT+TAB goes backward
+                                        app.toggle_panel_focus(false);
                                     }
                                     _ => {
                                         match app.panel_focus {

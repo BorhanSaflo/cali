@@ -432,21 +432,20 @@ impl App {
     }
 
     // Toggle panel focus between input and output
-    pub fn toggle_panel_focus(&mut self) {
-        match self.panel_focus {
-            PanelFocus::Input => {
-                self.panel_focus = PanelFocus::Output;
-                // Ensure the selected output index is valid
+    pub fn toggle_panel_focus(&mut self, forward: bool) {
+        self.panel_focus = match (self.panel_focus, forward) {
+            (PanelFocus::Input, true) | (PanelFocus::Input, false) => {
                 if !self.results.is_empty() {
                     self.output_selected_idx = self.output_selected_idx.min(self.results.len() - 1);
                 } else {
                     self.output_selected_idx = 0;
                 }
+                PanelFocus::Output
             },
-            PanelFocus::Output => {
-                self.panel_focus = PanelFocus::Input;
-            }
-        }
+            (PanelFocus::Output, true) | (PanelFocus::Output, false) => {
+                PanelFocus::Input
+            },
+        };
     }
     
     // Handle navigation in the output panel
