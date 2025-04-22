@@ -91,14 +91,17 @@ fn draw_input_panel(f: &mut Frame, app: &App, area: Rect) {
             Color::White
         }));
 
-    // Convert lines to styled list items with syntax highlighting
+    let inner_area = input_block.inner(area);
+    let visible_lines = inner_area.height as usize;
+
     let items: Vec<ListItem> = app.lines
         .iter()
+        .skip(app.input_scroll)
+        .take(visible_lines)
         .enumerate()
         .map(|(_, line)| {
             // Apply syntax highlighting to this line
             let highlighted_line = highlight_syntax(line);
-            
             ListItem::new(highlighted_line)
         })
         .collect();
@@ -110,8 +113,11 @@ fn draw_input_panel(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(input_list, area);
 
-    // Only show cursor in the input panel if it has focus
-    if app.panel_focus == crate::app::PanelFocus::Input && app.lines.len() > app.cursor_pos.0 {
+    // Only show cursor in the input panel if it has focus and cursor is in visible area
+    if app.panel_focus == crate::app::PanelFocus::Input && 
+       app.lines.len() > app.cursor_pos.0 && 
+       app.cursor_pos.0 >= app.input_scroll && 
+       app.cursor_pos.0 < app.input_scroll + visible_lines {
         let line = &app.lines[app.cursor_pos.0];
         let cursor_x = if app.cursor_pos.1 <= line.len() { 
             app.cursor_pos.1 as u16 
@@ -119,10 +125,26 @@ fn draw_input_panel(f: &mut Frame, app: &App, area: Rect) {
             line.len() as u16 
         };
 
-        // Cursor is in input area, offset by border and line number
+        // Cursor is in input area, offset by border and scroll position
         f.set_cursor(
             area.x + cursor_x + 1, // +1 for border
-            area.y + app.cursor_pos.0 as u16 + 1, // +1 for border
+            area.y + (app.cursor_pos.0 - app.input_scroll) as u16 + 1, // +1 for border
+        );
+    }
+
+    // Draw scroll indicators if needed
+    if app.input_scroll > 0 {
+        // Draw up arrow at top border
+        f.render_widget(
+            Paragraph::new("▲").alignment(Alignment::Center),
+            Rect { x: area.x + area.width - 2, y: area.y, width: 1, height: 1 }
+        );
+    }
+    if app.input_scroll + visible_lines < app.lines.len() {
+        // Draw down arrow at bottom border
+        f.render_widget(
+            Paragraph::new("▼").alignment(Alignment::Center),
+            Rect { x: area.x + area.width - 2, y: area.y + area.height - 1, width: 1, height: 1 }
         );
     }
 }
@@ -313,17 +335,21 @@ fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
 
     // Define the inner area (inside the borders)
     let inner_area = output_block.inner(area);
+    let visible_lines = inner_area.height as usize;
     
     // Render the block
     f.render_widget(output_block, area);
 
-    // Convert result lines to styled list items
+    // Convert result lines to styled list items, only for visible lines
     let items: Vec<ListItem> = app.results
         .iter()
+        .skip(app.output_scroll)
+        .take(visible_lines)
         .enumerate()
         .map(|(idx, result)| {
             // Check if this is the selected line
-            let is_selected = app.panel_focus == crate::app::PanelFocus::Output && idx == app.output_selected_idx;
+            let is_selected = app.panel_focus == crate::app::PanelFocus::Output && 
+                            idx + app.output_scroll == app.output_selected_idx;
             
             // Style based on content and selection
             let line_style = if is_selected {
@@ -378,30 +404,45 @@ fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
     // Render the list inside the inner area
     f.render_widget(output_list, inner_area);
     
-    // Draw a fill rectangle behind the currently selected line for vim-like highlighting
-    if app.panel_focus == crate::app::PanelFocus::Output && !app.results.is_empty() {
-        let selected_idx = app.output_selected_idx;
-        if selected_idx < app.results.len() {
-            // Calculate the y-position of the selected line
-            let y_position = inner_area.y + selected_idx as u16;
+    // Draw scroll indicators if needed
+    if app.output_scroll > 0 {
+        // Draw up arrow at top border
+        f.render_widget(
+            Paragraph::new("▲").alignment(Alignment::Center),
+            Rect { x: area.x + area.width - 2, y: area.y, width: 1, height: 1 }
+        );
+    }
+    if app.output_scroll + visible_lines < app.results.len() {
+        // Draw down arrow at bottom border
+        f.render_widget(
+            Paragraph::new("▼").alignment(Alignment::Center),
+            Rect { x: area.x + area.width - 2, y: area.y + area.height - 1, width: 1, height: 1 }
+        );
+    }
+    
+    if app.panel_focus == crate::app::PanelFocus::Output && 
+       !app.results.is_empty() && 
+       app.output_selected_idx >= app.output_scroll && 
+       app.output_selected_idx < app.output_scroll + visible_lines {
+        // Calculate the y-position of the selected line
+        let y_position = inner_area.y + (app.output_selected_idx - app.output_scroll) as u16;
+        
+        // Only highlight if the line is within the visible area
+        if y_position >= inner_area.y && y_position < inner_area.y + inner_area.height {
+            // Create a rectangle that spans the entire width of the inner area
+            let highlight_area = Rect {
+                x: inner_area.x,
+                y: y_position,
+                width: inner_area.width,
+                height: 1,
+            };
             
-            // Only highlight if the line is within the visible area
-            if y_position >= inner_area.y && y_position < inner_area.y + inner_area.height {
-                // Create a rectangle that spans the entire width of the inner area
-                let highlight_area = Rect {
-                    x: inner_area.x,
-                    y: y_position,
-                    width: inner_area.width,
-                    height: 1,
-                };
-                
-                // Create a blank paragraph with the highlight style
-                let highlight = Paragraph::new("")
-                    .style(Style::default().bg(Color::DarkGray));
-                
-                // Render the highlight underneath the text
-                f.render_widget(highlight, highlight_area);
-            }
+            // Create a blank paragraph with the highlight style
+            let highlight = Paragraph::new("")
+                .style(Style::default().bg(Color::DarkGray));
+            
+            // Render the highlight underneath the text
+            f.render_widget(highlight, highlight_area);
         }
     }
 }

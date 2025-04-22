@@ -21,6 +21,8 @@ pub struct App {
     cached_variables: HashMap<String, Value>, // Cache variables from previous evaluations
     pub input_panel_area: Option<(u16, u16, u16, u16)>,  // (x, y, width, height) of input panel
     pub output_panel_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of output panel
+    pub input_scroll: usize,           // Scroll position for input panel
+    pub output_scroll: usize,          // Scroll position for output panel
 }
 
 // Input mode for the application
@@ -57,6 +59,8 @@ impl App {
             cached_variables: HashMap::new(),
             input_panel_area: None,
             output_panel_area: None,
+            input_scroll: 0,
+            output_scroll: 0,
         }
     }
 
@@ -143,6 +147,7 @@ impl App {
                 } else {
                     self.delete_char_before_cursor();
                 }
+                self.ensure_cursor_visible();
             }
             KeyCode::Delete => {
                 if self.cursor_at_end_of_line() && self.cursor_pos.0 < self.lines.len() - 1 {
@@ -153,24 +158,53 @@ impl App {
                 } else {
                     self.delete_char_at_cursor();
                 }
+                self.ensure_cursor_visible();
             }
             KeyCode::Up => {
                 self.move_cursor_up();
+                self.ensure_cursor_visible();
             }
             KeyCode::Down => {
                 self.move_cursor_down();
+                self.ensure_cursor_visible();
             }
             KeyCode::Left => {
                 self.move_cursor_left();
+                self.ensure_cursor_visible();
             }
             KeyCode::Right => {
                 self.move_cursor_right();
+                self.ensure_cursor_visible();
             }
             KeyCode::Home => {
                 self.move_cursor_to_start_of_line();
             }
             KeyCode::End => {
                 self.move_cursor_to_end_of_line();
+            }
+            KeyCode::PageUp => {
+                // Move cursor up by the number of visible lines
+                if let Some((_, _, _, h)) = self.input_panel_area {
+                    let visible_lines = h.saturating_sub(2) as usize;
+                    for _ in 0..visible_lines {
+                        if self.cursor_pos.0 > 0 {
+                            self.move_cursor_up();
+                        }
+                    }
+                }
+                self.ensure_cursor_visible();
+            }
+            KeyCode::PageDown => {
+                // Move cursor down by the number of visible lines
+                if let Some((_, _, _, h)) = self.input_panel_area {
+                    let visible_lines = h.saturating_sub(2) as usize;
+                    for _ in 0..visible_lines {
+                        if self.cursor_pos.0 < self.lines.len() - 1 {
+                            self.move_cursor_down();
+                        }
+                    }
+                }
+                self.ensure_cursor_visible();
             }
             KeyCode::Char(c) => {
                 self.insert_char(c);
@@ -358,6 +392,9 @@ impl App {
         self.debounced_results.insert(self.cursor_pos.0 + 1, String::new());
         self.cursor_pos.0 += 1;
         self.cursor_pos.1 = 0;
+        
+        // Ensure the cursor remains visible after inserting a new line
+        self.ensure_cursor_visible();
     }
 
     fn join_with_previous_line(&mut self) {
@@ -389,6 +426,13 @@ impl App {
             if self.cursor_pos.1 > line_len {
                 self.cursor_pos.1 = line_len;
             }
+            // Adjust scroll position if cursor moves above visible area
+            if let Some((_, _y, _, h)) = self.input_panel_area {
+                let _visible_lines = h.saturating_sub(2) as usize; // Subtract 2 for borders
+                if self.cursor_pos.0 < self.input_scroll {
+                    self.input_scroll = self.cursor_pos.0;
+                }
+            }
         }
     }
 
@@ -398,6 +442,13 @@ impl App {
             let line_len = self.lines[self.cursor_pos.0].len();
             if self.cursor_pos.1 > line_len {
                 self.cursor_pos.1 = line_len;
+            }
+            // Adjust scroll position if cursor moves below visible area
+            if let Some((_, _y, _, h)) = self.input_panel_area {
+                let visible_lines = h.saturating_sub(2) as usize; // Subtract 2 for borders
+                if self.cursor_pos.0 >= self.input_scroll + visible_lines {
+                    self.input_scroll = self.cursor_pos.0.saturating_sub(visible_lines) + 1;
+                }
             }
         }
     }
@@ -460,21 +511,41 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.output_selected_idx > 0 {
                     self.output_selected_idx -= 1;
+                    // Adjust scroll position if selection moves above visible area
+                    if let Some((_, _, _, h)) = self.output_panel_area {
+                        let _visible_lines = h.saturating_sub(2) as usize; // Subtract 2 for borders
+                        if self.output_selected_idx < self.output_scroll {
+                            self.output_scroll = self.output_selected_idx;
+                        }
+                    }
                 }
             },
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.results.is_empty() && self.output_selected_idx < self.results.len() - 1 {
                     self.output_selected_idx += 1;
+                    // Adjust scroll position if selection moves below visible area
+                    if let Some((_, _, _, h)) = self.output_panel_area {
+                        let visible_lines = h.saturating_sub(2) as usize; // Subtract 2 for borders
+                        if self.output_selected_idx >= self.output_scroll + visible_lines {
+                            self.output_scroll = self.output_selected_idx.saturating_sub(visible_lines) + 1;
+                        }
+                    }
                 }
             },
             KeyCode::Home | KeyCode::Char('g') => {
                 // Go to top (vim gg)
                 self.output_selected_idx = 0;
+                self.output_scroll = 0;
             },
             KeyCode::End | KeyCode::Char('G') => {
                 // Go to bottom (vim G)
                 if !self.results.is_empty() {
                     self.output_selected_idx = self.results.len() - 1;
+                    // Adjust scroll position
+                    if let Some((_, _, _, h)) = self.output_panel_area {
+                        let visible_lines = h.saturating_sub(2) as usize;
+                        self.output_scroll = self.output_selected_idx.saturating_sub(visible_lines.saturating_sub(1));
+                    }
                 }
             },
             _ => {}
@@ -548,7 +619,7 @@ impl App {
                y > input_y && y < input_y + input_height - 1 {
                 // Convert screen coordinates to text coordinates (accounting for borders)
                 let text_x = (x - input_x - 1) as usize;
-                let text_y = (y - input_y - 1) as usize;
+                let text_y = (y - input_y - 1) as usize + self.input_scroll;
                 
                 // Check if we have a line at this y position
                 if text_y < self.lines.len() {
@@ -577,8 +648,7 @@ impl App {
             // If click is within the content area (excluding borders)
             if x > output_x && x < output_x + output_width - 1 && 
                y > output_y && y < output_y + output_height - 1 {
-                // Convert screen coordinates to text coordinates
-                let text_y = (y - output_y - 1) as usize;
+                let text_y = (y - output_y - 1) as usize + self.output_scroll;
                 
                 // Check if we have a result at this y position
                 if text_y < self.results.len() {
@@ -589,5 +659,20 @@ impl App {
         }
         
         false
+    }
+
+    pub fn ensure_cursor_visible(&mut self) {
+        if let Some((_, _, _, h)) = self.input_panel_area {
+            let visible_lines = h.saturating_sub(2) as usize; // Subtract 2 for borders
+            
+            // If cursor is above visible area, scroll up
+            if self.cursor_pos.0 < self.input_scroll {
+                self.input_scroll = self.cursor_pos.0;
+            }
+            // If cursor is below visible area, scroll down
+            else if self.cursor_pos.0 >= self.input_scroll + visible_lines {
+                self.input_scroll = self.cursor_pos.0.saturating_sub(visible_lines) + 1;
+            }
+        }
     }
 } 
