@@ -450,10 +450,13 @@ fn draw_output_panel(f: &mut Frame, app: &App, area: Rect) {
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     match app.input_mode {
         crate::app::InputMode::Normal => {
-            // Normal mode: display status message
+            // Normal mode: display status message or keybinds
             let status_text = match &app.status_message {
                 Some(message) => message.as_str(),
-                None => ""
+                None => match app.panel_focus {
+                    crate::app::PanelFocus::Input => "Tab: Switch Panel | Ctrl+S: Save | Ctrl+Q: Quit",
+                    crate::app::PanelFocus::Output => "Tab: Switch Panel | ↑/k: Up | ↓/j: Down | g/Home: Top | G/End: Bottom | Enter/y: Copy"
+                }
             };
             
             let status_bar = Paragraph::new(status_text)
